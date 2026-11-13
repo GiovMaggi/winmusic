@@ -38,7 +38,7 @@ jobs:
     name: Real audio test (VB-CABLE on Windows)
     needs: build
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -57,6 +57,14 @@ jobs:
           Start-Service AudioEndpointBuilder
           Start-Service Audiosrv
           Get-Service AudioEndpointBuilder, Audiosrv
+      - name: GUI test before VB-CABLE is installed (first launch)
+        shell: pwsh
+        run: |
+          $gui = Start-Process app\WinMusic.exe -ArgumentList '--smoketest-nocable',"$PWD\gui-nocable-report.md" -PassThru
+          if (-not $gui.WaitForExit(60000)) { Stop-Process $gui -Force; Write-Host 'timed out'; exit 1 }
+          Get-Content gui-nocable-report.md
+          Get-Content gui-nocable-report.md | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          exit $gui.ExitCode
       - name: Install VB-CABLE
         shell: pwsh
         run: ./scripts/ci-install-vbcable.ps1
@@ -100,6 +108,7 @@ jobs:
           path: |
             selftest-report.md
             gui-report.md
+            gui-nocable-report.md
 
   release:
     name: GitHub release

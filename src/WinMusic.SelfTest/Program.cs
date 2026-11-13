@@ -17,6 +17,16 @@ using WinMusic.Core.Analysis;
 var inv = CultureInfo.InvariantCulture;
 if (args.Length > 0 && args[0] == "--tone-cable")
     return ToneChild(Devices.FindCableInput()!.Id, double.Parse(args[1], inv), double.Parse(args[2], inv), float.Parse(args[3], inv));
+if (args.Length > 0 && args[0] == "--tone-pattern") // deviceId, then play/pause seconds alternating
+{
+    var secs = args.Skip(2).Select(a => double.Parse(a, inv)).ToArray();
+    for (int i = 0; i < secs.Length; i++)
+    {
+        if (i % 2 == 0) ToneChild(args[1], 1000, secs[i], 1f);   // play (opens and closes its stream, like pausing Spotify)
+        else Thread.Sleep(TimeSpan.FromSeconds(secs[i]));       // paused: no audio stream at all
+    }
+    return 0;
+}
 if (args.Length > 0 && args[0] == "--tone")
     return ToneChild(args[1], double.Parse(args[2], inv), double.Parse(args[3], inv), float.Parse(args[4], inv));
 
@@ -247,6 +257,70 @@ Say("## D. Picking an app by name; it closes and reopens while WinMusic runs");
     Check(s4.Any(s => s.Kind == SourceKind.App && s.Pid == child2.Id), $"re-attached after the app reopened (pid {child2.Id})");
     engine.Stop();
     Kill(child2);
+}
+
+// ---------------------------------------------------------------- E
+Say("");
+Say("## E. Music paused and resumed (app closes its audio stream for 4 s, twice)");
+{
+    var psi = new ProcessStartInfo(toneApp) { UseShellExecute = false };
+    foreach (var a in new[] { "--tone-pattern", cableIn, "14", "4", "10", "4", "12" }) psi.ArgumentList.Add(a);
+    using var child = Process.Start(psi)!;
+    using var engine = new AudioEngine();
+    engine.SetMicDevice("");
+    engine.Start(cableIn);
+    engine.AddAppPid(child.Id);
+    var tap = new List<float>();
+    engine.OutputTap = d => { lock (tap) for (int i = 0; i < d.Length; i += 2) tap.Add(d[i]); };
+    child.WaitForExit(60000);
+    Thread.Sleep(1000);
+    engine.OutputTap = null;
+    var st = engine.GetStatus().FirstOrDefault();
+    Say($"- source: {st}");
+    float[] all; lock (tap) all = tap.ToArray();
+    var whole = SineAnalyzer.Analyze(TrimSilence(all), outRate, 1000);
+    Say($"- whole session: {whole}");
+    var trimmed = TrimSilence(all);
+    var lastPart = trimmed.Length > outRate * 9 ? trimmed[^(outRate * 8)..] : trimmed;
+    var tail = SineAnalyzer.Analyze(lastPart, outRate, 1000);
+    Say($"- last 8 s after the second resume: {tail}");
+    Check(st != null && st.Underruns >= 2, "both pauses were detected");
+    Check(whole.SilentBlocks >= 50, "output is silent while paused");
+    Check(whole.GlitchBlocks <= 4, $"only the stop/start edges differ ({whole.GlitchBlocks} edge blocks)");
+    Check(tail.GlitchBlocks == 0 && tail.SilentBlocks == 0 && tail.MedianThdNDb < -110, $"clean audio after resuming ({tail.MedianThdNDb:F1} dB)");
+    engine.Stop();
+}
+
+// ---------------------------------------------------------------- F
+const int SoakMinutes = 10;
+Say("");
+Say($"## F. Soak test: {SoakMinutes} minutes of continuous music");
+{
+    using var child = StartTone(cableIn, SoakMinutes * 60 + 30, 1f);
+    Thread.Sleep(800);
+    using var engine = new AudioEngine();
+    engine.SetMicDevice("");
+    engine.Start(cableIn);
+    engine.AddAppPid(child.Id);
+    var tap = new List<float>(outRate * (SoakMinutes * 60 + 20));
+    engine.OutputTap = d => { lock (tap) for (int i = 0; i < d.Length; i += 2) tap.Add(d[i]); };
+    for (int m = 1; m <= SoakMinutes; m++)
+    {
+        Thread.Sleep(60_000);
+        var s1 = engine.GetStatus().FirstOrDefault();
+        Say($"  - minute {m}: buffered {s1?.BufferedMs:F1} ms, clock {s1?.CorrectionPpm:F1} ppm, underruns {s1?.Underruns}, resyncs {s1?.Resyncs}");
+    }
+    engine.OutputTap = null;
+    var st = engine.GetStatus().FirstOrDefault();
+    float[] all; lock (tap) all = tap.ToArray();
+    var rep = SineAnalyzer.Analyze(Settled(TrimSilence(all), outRate), outRate, 1000);
+    Say($"- {rep}");
+    Check(rep.Blocks >= SoakMinutes * 590, "audio for the whole session");
+    Check(rep.GlitchBlocks == 0 && rep.SilentBlocks == 0, "no glitches or dropouts in the whole session");
+    Check(st?.Underruns == 0 && st?.Resyncs == 0 && st?.Overflows == 0, "no underruns, resyncs or overflows");
+    Check(rep.MedianThdNDb < -110 && rep.WorstThdNDb < -90, $"THD+N median {rep.MedianThdNDb:F1} dB, worst {rep.WorstThdNDb:F1} dB");
+    engine.Stop();
+    Kill(child);
 }
 
 Say("");

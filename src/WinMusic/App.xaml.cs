@@ -15,6 +15,11 @@ public partial class App : Application
             SmokeTest = (e.Args[1], e.Args[2]);
             Settings.ReadOnly = true;
         }
+        else if (e.Args.Length >= 2 && e.Args[0] == "--smoketest-nocable")
+        {
+            SmokeTest = ("", e.Args[1]);
+            Settings.ReadOnly = true;
+        }
         DispatcherUnhandledException += (_, ex) =>
         {
             if (SmokeTest != null)

@@ -114,8 +114,26 @@ public partial class MainWindow : Window
         _meterTimer.Start();
         _slowTimer.Start();
 
+        if (App.SmokeTest is { exe: "" } nc) { RunNoCableSmokeTest(nc.report); return; }
         if (App.SmokeTest != null) { _ = RunSmokeTest(App.SmokeTest.Value.exe, App.SmokeTest.Value.report); return; }
         if (_settings.AutoStart && _cable?.Installed == true) StartEngine();
+    }
+
+    /// <summary>First launch on a PC without VB-CABLE: must not crash, must offer the installer.</summary>
+    private void RunNoCableSmokeTest(string reportPath)
+    {
+        var log = new List<string> { "# WinMusic GUI test: first launch without VB-CABLE", "" };
+        bool ok = true;
+        void Check(bool c, string what) { log.Add($"- {(c ? "PASS" : "FAIL")}: {what}"); ok &= c; }
+        Check(_cable?.Installed == false, "detects that VB-CABLE is missing");
+        Check(InstallCableBtn.Visibility == Visibility.Visible && InstallCableBtn.IsEnabled, "shows the Install VB-CABLE button");
+        Check(!StartBtn.IsEnabled, "Start is disabled until the cable exists");
+        Check(CableText.Text.Contains("not installed"), $"explains the problem (\"{CableText.Text}\")");
+        log.Add("");
+        log.Add(ok ? "**GUI (no cable) RESULT: ALL PASSED**" : "**GUI (no cable) RESULT: FAILURES**");
+        File.WriteAllText(reportPath, string.Join("\n", log));
+        App.SmokeExitCode = ok ? 0 : 1;
+        Close();
     }
 
     /// <summary>
