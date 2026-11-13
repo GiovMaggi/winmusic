@@ -56,12 +56,24 @@ jobs:
       - name: Install VB-CABLE
         shell: pwsh
         run: ./scripts/ci-install-vbcable.ps1
+      - name: Allow desktop apps to use microphones (Windows privacy setting)
+        shell: pwsh
+        run: |
+          foreach ($root in 'HKLM:', 'HKCU:') {
+            $k = "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+            New-Item -Path $k -Force | Out-Null
+            Set-ItemProperty -Path $k -Name Value -Value Allow
+            New-Item -Path "$k\NonPackaged" -Force | Out-Null
+            Set-ItemProperty -Path "$k\NonPackaged" -Name Value -Value Allow
+          }
+          $k = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy'
+          if (Test-Path $k) { Remove-ItemProperty -Path $k -Name LetAppsAccessMicrophone -ErrorAction SilentlyContinue }
       - name: Run self test
         shell: pwsh
         run: |
           ./selftest/WinMusic.SelfTest.exe --report selftest-report.md
           $code = $LASTEXITCODE
-          Get-Content selftest-report.md | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          if (Test-Path selftest-report.md) { Get-Content selftest-report.md | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY }
           exit $code
       - uses: actions/upload-artifact@v4
         if: always()

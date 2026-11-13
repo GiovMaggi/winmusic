@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="WinMusic" Width="600" Height="860" MinWidth="480" MinHeight="600"
         Background="{StaticResource Bg}" WindowStartupLocation="CenterScreen"
-        Loaded="OnLoaded" Closing="OnClosing">
+        Loaded="OnLoaded" Closing="OnClosing" Icon="app.ico">
   <Window.Resources>
     <Style x:Key="MeterTrack" TargetType="Border">
       <Setter Property="Background" Value="{StaticResource Track}"/>

@@ -14,6 +14,7 @@ internal static class Hr
     public const int S_FALSE = 1;
     public const int AUDCLNT_E_DEVICE_INVALIDATED = unchecked((int)0x88890004);
     public const int AUDCLNT_E_UNSUPPORTED_FORMAT = unchecked((int)0x88890008);
+    public const int E_ACCESSDENIED = unchecked((int)0x80070005);
     public static void Check(int hr, string what)
     {
         if (hr < 0) throw new AudioException(what, hr);
@@ -23,7 +24,11 @@ internal static class Hr
 public sealed class AudioException : Exception
 {
     public int HResult32 { get; }
-    public AudioException(string what, int hr) : base($"{what} failed (0x{hr:X8})") { HResult32 = hr; HResult = hr; }
+    public AudioException(string what, int hr) : base(Describe(what, hr)) { HResult32 = hr; HResult = hr; }
+
+    private static string Describe(string what, int hr) => hr == Hr.E_ACCESSDENIED && what.Contains("capture")
+        ? "Windows is blocking microphone access. Open Settings → Privacy & security → Microphone and turn on “Microphone access” and “Let desktop apps access your microphone”."
+        : $"{what} failed (0x{hr:X8})";
     public bool DeviceInvalidated => HResult32 == Hr.AUDCLNT_E_DEVICE_INVALIDATED;
 }
 

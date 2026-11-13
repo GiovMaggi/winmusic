@@ -82,9 +82,12 @@ public sealed class AudioEngine : IDisposable
         _watcher = null;
         _render?.Dispose();
         _render = null;
-        var old = _sources;
-        _sources = Array.Empty<Source>();
-        foreach (var s in old) s.Capture?.Dispose();
+        lock (_reconcileLock) // wait for any in-flight reconcile so no capture is left running
+        {
+            var old = _sources;
+            _sources = Array.Empty<Source>();
+            foreach (var s in old) s.Capture?.Dispose();
+        }
     }
 
     public void Dispose() => Stop();
@@ -155,7 +158,7 @@ public sealed class AudioEngine : IDisposable
         }
         render.Start();
         _render = render;
-        Log?.Invoke($"Output: {OutputDeviceName} @ {render.Format} (buffer {render.BufferFrames} frames, latency {render.LatencyMs:F1} ms)");
+        Log?.Invoke($"Output: {OutputDeviceName} @ {render.Format} (buffer {render.BufferFrames} frames = {render.BufferFrames * 1000.0 / _outRate:F1} ms)");
     }
 
     private void Fill(Span<float> output, int frames, double now)

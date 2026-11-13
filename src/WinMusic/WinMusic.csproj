@@ -5,10 +5,14 @@
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <AssemblyName>WinMusic</AssemblyName>
     <Product>WinMusic</Product>
     <Description>Studio-quality music through your microphone</Description>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="app.ico" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../WinMusic.Audio/WinMusic.Audio.csproj" />
   </ItemGroup>

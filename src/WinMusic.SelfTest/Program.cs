@@ -17,6 +17,11 @@ if (args.Length > 0 && args[0] == "--tone")
 
 string reportPath = args.Length >= 2 && args[0] == "--report" ? args[1] : "selftest-report.md";
 var report = new StringBuilder();
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    report.AppendLine().AppendLine($"**CRASH: {e.ExceptionObject}**");
+    File.WriteAllText(reportPath, report.ToString());
+};
 void Say(string s) { Console.WriteLine(s); report.AppendLine(s); }
 bool allOk = true;
 void Check(bool ok, string what) { Say($"- {(ok ? "PASS" : "FAIL")}: {what}"); if (!ok) allOk = false; }
