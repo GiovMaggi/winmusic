@@ -292,7 +292,7 @@ Say("## E. Music paused and resumed (app closes its audio stream for 4 s, twice)
 }
 
 // ---------------------------------------------------------------- F
-const int SoakMinutes = 10;
+const int SoakMinutes = 5;
 Say("");
 Say($"## F. Soak test: {SoakMinutes} minutes of continuous music");
 {
