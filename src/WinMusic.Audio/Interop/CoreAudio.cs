@@ -181,6 +181,24 @@ internal interface IAudioSessionControl2
     [PreserveSig] int SetDuckingPreference([MarshalAs(UnmanagedType.Bool)] bool optOut);
 }
 
+[ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioEndpointVolume
+{
+    [PreserveSig] int RegisterControlChangeNotify(IntPtr notify);
+    [PreserveSig] int UnregisterControlChangeNotify(IntPtr notify);
+    [PreserveSig] int GetChannelCount(out uint count);
+    [PreserveSig] int SetMasterVolumeLevel(float levelDb, ref Guid eventContext);
+    [PreserveSig] int SetMasterVolumeLevelScalar(float level, ref Guid eventContext);
+    [PreserveSig] int GetMasterVolumeLevel(out float levelDb);
+    [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
+    [PreserveSig] int SetChannelVolumeLevel(uint channel, float levelDb, ref Guid eventContext);
+    [PreserveSig] int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid eventContext);
+    [PreserveSig] int GetChannelVolumeLevel(uint channel, out float levelDb);
+    [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
+    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid eventContext);
+    [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+}
+
 // ---- Process loopback activation (Windows 10 2004+) ----
 
 [ComImport, Guid("72A22D78-CDE4-431D-B8CC-843A71199B6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -251,6 +269,7 @@ internal static class Native
     public static readonly Guid IID_IAudioCaptureClient = new("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
     public static readonly Guid IID_ISimpleAudioVolume = new("87CE5498-68D6-44E5-9215-6DA47EF883D8");
     public static readonly Guid IID_IAudioSessionManager2 = new("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F");
+    public static readonly Guid IID_IAudioEndpointVolume = new("5CDF2C82-841E-4546-9722-0CF74078229A");
 
     [DllImport("Mmdevapi.dll", ExactSpelling = true)]
     public static extern int ActivateAudioInterfaceAsync(

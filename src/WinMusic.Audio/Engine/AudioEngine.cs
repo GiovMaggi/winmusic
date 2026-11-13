@@ -161,7 +161,7 @@ public sealed class AudioEngine : IDisposable
         Log?.Invoke($"Output: {OutputDeviceName} @ {render.Format} (buffer {render.BufferFrames} frames = {render.BufferFrames * 1000.0 / _outRate:F1} ms)");
     }
 
-    private void Fill(Span<float> output, int frames, double now)
+    private void Fill(Span<float> output, int frames, double now, int queued)
     {
         output.Clear();
         if (_tmp.Length < frames * 2) _tmp = new float[frames * 2];
@@ -171,7 +171,7 @@ public sealed class AudioEngine : IDisposable
 
         foreach (var s in _sources)
         {
-            s.Drift.Read(tmp, frames, now);
+            s.Drift.Read(tmp, frames, now, queued);
             float peak = 0;
             for (int i = 0; i < tmp.Length; i++) { float a = Math.Abs(tmp[i]); if (a > peak) peak = a; }
             float g = s.Kind == SourceKind.Mic ? micGain : musicGain;

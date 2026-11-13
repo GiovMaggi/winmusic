@@ -28,25 +28,37 @@ public sealed class DriftSource
     private long _totalRead;      // consumer only
 
     // controller state (render thread only)
+    //
+    // 1. MEASURE (first 6 s after audio starts): the speed is left alone and we fit a straight line
+    //    through the buffer level. Its slope IS the clock drift between the two devices, measured
+    //    precisely (a few ppm), so we can set the correction once, smoothly, without hunting.
+    // 2. TRACK: a very gentle PI loop (2 s averages, tiny gains) keeps the buffer centred. The
+    //    correction is always ramped, so the playback speed never jumps; it changes by well under
+    //    1 ppm per second, which keeps the pitch modulation far below audibility (and below -110 dB).
     private bool _running;
+    private bool _measuring;
+    private double _runTime;
+    private double _sn, _st, _sy, _stt, _sty;       // regression sums during MEASURE
     private double _fillSum;
     private int _fillCount;
     private double _periodElapsed;
-    private double _runTime;
+    private double _setpoint;                       // buffer level (frames) we hold during TRACK
     private double _integral;
-    private double _adjust;        // currently applied correction (fraction)
-    private double _adjustFrom, _adjustTo, _rampPos;
+    private double _adjust;                         // currently applied correction (fraction)
+    private double _adjustFrom, _adjustTo, _rampPos = 1, _rampSeconds = 2;
 
-    // The buffer level is averaged over 1 s (removes packet saw-tooth and scheduling jitter),
-    // then a PI controller updates the target correction once per second and the applied
-    // correction is ramped linearly between updates so the speed never jumps.
-    private const double UpdatePeriod = 1.0;
-    private const double AcquireSeconds = 25.0;
-    private const double KpAcquire = 0.15, KiAcquire = 0.008;   // fast lock-in after start
-    private const double KpTrack = 0.04, KiTrack = 0.0005;      // very smooth once locked
-    private const double MaxAdjust = 0.005; // +-0.5 % (real drift is usually < 0.03 %)
+    private const double MeasureSeconds = 6.0;
+    private const double TrackPeriod = 2.0;
+    private const double KpTrack = 0.01, KiTrack = 0.00005;
+    private const double KpRescue = 0.05;           // only if the buffer wandered > 15 ms off
+    private const double MaxAdjust = 0.005;         // +-0.5 % (real drift is usually < 0.03 %)
 
-    public DriftSource(int inRate, int outRate, double targetLatencyMs = 40, double ringSeconds = 2.0)
+
+    /// <param name="outputBufferFrames">
+    /// Size of the output device buffer (frames at the output rate). Audio we've handed to the device
+    /// but it hasn't played yet is counted as buffered, using the padding passed to <see cref="Read"/>.
+    /// </param>
+    public DriftSource(int inRate, int outRate, double targetLatencyMs = 40, double ringSeconds = 2.0, int outputBufferFrames = 0)
     {
         _inRate = inRate;
         _outRate = outRate;
@@ -109,6 +121,20 @@ public sealed class DriftSource
         Publish(_ring.Write(c), frames, firstFrameTime);
     }
 
+    private void StartMeasure()
+    {
+        // keep _adjust: the drift between two devices doesn't change when music pauses, we just refine it
+        _measuring = true;
+        _runTime = 0;
+        _sn = _st = _sy = _stt = _sty = 0;
+        _adjustFrom = _adjustTo = _adjust; _rampPos = 1;
+    }
+
+    private void Ramp(double to, double seconds)
+    {
+        _adjustFrom = _adjust; _adjustTo = to; _rampPos = 0; _rampSeconds = seconds;
+    }
+
     /// <summary>Buffer level estimate in input frames at time <paramref name="now"/>.</summary>
     private double EstimateFill(double now)
     {
@@ -122,8 +148,9 @@ public sealed class DriftSource
     /// <summary>
     /// Consumer side (render thread). Always fills dst with exactly outFrames stereo frames.
     /// <paramref name="now"/> is the current time in seconds (same clock as Write).
+    /// <paramref name="queuedOutputFrames"/> is how much audio is still waiting in the output device buffer (WASAPI padding).
     /// </summary>
-    public void Read(Span<float> dst, int outFrames, double now)
+    public void Read(Span<float> dst, int outFrames, double now, int queuedOutputFrames = 0)
     {
         double fill = _ring.AvailableFrames + _resampler.BufferedAheadFrames;
         double dt = outFrames / _outRate;
@@ -133,9 +160,7 @@ public sealed class DriftSource
             if (fill >= _targetFrames)
             {
                 _running = true;
-                _fillSum = 0; _fillCount = 0; _periodElapsed = 0; _runTime = 0;
-                // keep _integral/_adjust: the drift between two devices does not change when music pauses
-                _adjustFrom = _adjustTo = _adjust; _rampPos = 1;
+                StartMeasure();
             }
             else
             {
@@ -148,33 +173,50 @@ public sealed class DriftSource
         if (fill > _maxFrames)
         {
             _totalRead += _ring.Skip((int)(fill - _targetFrames));
-            _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
             Resyncs++;
+            StartMeasure();
         }
 
-        _fillSum += EstimateFill(now); _fillCount++;
-        _periodElapsed += dt; _runTime += dt;
-        if (_periodElapsed >= UpdatePeriod)
+        double level = EstimateFill(now) + queuedOutputFrames * _nominalStep;
+        _runTime += dt;
+        if (_measuring)
         {
-            double errSec = (_fillSum / _fillCount - _targetFrames) / _inRate;
-            bool acquire = _runTime < AcquireSeconds;
-            double kp = acquire ? KpAcquire : KpTrack, ki = acquire ? KiAcquire : KiTrack;
-            // convert integral between gain sets so the output doesn't jump when switching
-            _integral += errSec * _periodElapsed;
-            double target = kp * errSec + ki * _integral;
-            if (target > MaxAdjust || target < -MaxAdjust)
+            double t = _runTime;
+            _sn++; _st += t; _sy += level; _stt += t * t; _sty += t * level;
+            if (_runTime >= MeasureSeconds)
             {
-                target = Math.Clamp(target, -MaxAdjust, MaxAdjust);
-                _integral -= errSec * _periodElapsed; // anti-windup
+                double den = _sn * _stt - _st * _st;
+                double slope = den > 0 ? (_sn * _sty - _st * _sy) / den : 0;   // frames per second
+                double newAdjust = Math.Clamp(_adjust + slope / _inRate, -MaxAdjust, MaxAdjust);
+                _setpoint = Math.Max(_sy / _sn + slope * (_runTime - _st / _sn), _targetFrames); // level now
+                _integral = newAdjust / KiTrack;
+                Ramp(newAdjust, 3.0);
+                _measuring = false;
+                _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
             }
-            _adjustFrom = _adjust; _adjustTo = target; _rampPos = 0;
-            _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
-            if (acquire && _runTime + UpdatePeriod >= AcquireSeconds)
-                _integral = (target - KpTrack * errSec) / KiTrack; // bumpless switch to tracking gains
+        }
+        else
+        {
+            _fillSum += level; _fillCount++;
+            _periodElapsed += dt;
+            if (_periodElapsed >= TrackPeriod)
+            {
+                double errSec = (_fillSum / _fillCount - _setpoint) / _inRate;
+                double kp = Math.Abs(errSec) > 0.015 ? KpRescue : KpTrack;
+                _integral += errSec * _periodElapsed;
+                double target = kp * errSec + KiTrack * _integral;
+                if (Math.Abs(target) > MaxAdjust)
+                {
+                    target = Math.Clamp(target, -MaxAdjust, MaxAdjust);
+                    _integral -= errSec * _periodElapsed; // anti-windup
+                }
+                Ramp(target, TrackPeriod);
+                _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
+            }
         }
         if (_rampPos < 1)
         {
-            _rampPos = Math.Min(1, _rampPos + dt / UpdatePeriod);
+            _rampPos = Math.Min(1, _rampPos + dt / _rampSeconds);
             _adjust = _adjustFrom + (_adjustTo - _adjustFrom) * _rampPos;
         }
         double step = _nominalStep * (1.0 + _adjust);

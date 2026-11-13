@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using WinMusic.Audio.Interop;
 using WinMusic.Audio.Wasapi;
@@ -11,7 +10,7 @@ namespace WinMusic.Audio.Platform;
 /// <summary>One-click fixes for Windows settings that would hurt music quality.</summary>
 public static class SystemSetup
 {
-    public sealed record CableStatus(bool Installed, AudioDevice? Input, AudioDevice? Output, WaveFormatInfo? InputFormat, WaveFormatInfo? OutputFormat, bool CableIsDefaultPlayback);
+    public sealed record CableStatus(bool Installed, AudioDevice? Input, AudioDevice? Output, WaveFormatInfo? InputFormat, WaveFormatInfo? OutputFormat, bool CableIsDefaultPlayback, bool CableVolumeNot100 = false);
 
     public static CableStatus GetCableStatus()
     {
@@ -21,7 +20,13 @@ public static class SystemSetup
         try { if (input != null) inF = GetDeviceFormat(input.Id) ?? Devices.GetMixFormat(input.Id); } catch { }
         try { if (output != null) outF = GetDeviceFormat(output.Id) ?? Devices.GetMixFormat(output.Id); } catch { }
         bool cableDefault = input != null && Devices.DefaultId(DeviceFlow.Playback) == input.Id;
-        return new CableStatus(input != null && output != null, input, output, inF, outF, cableDefault);
+        bool volIssue = false;
+        foreach (var d in new[] { input, output })
+        {
+            if (d == null) continue;
+            try { var (v, m) = Devices.GetEndpointVolume(d.Id); if (v < 0.999f || m) volIssue = true; } catch { }
+        }
+        return new CableStatus(input != null && output != null, input, output, inF, outF, cableDefault, volIssue);
     }
 
     /// <summary>The format the device itself runs at (Sound control panel "Default Format").</summary>
@@ -104,6 +109,20 @@ public static class SystemSetup
             catch (Exception e) { log.Add($"Could not set the format of {dev.Name} ({e.Message}). Set it to 48000 Hz, 24 bit in Sound settings."); }
         }
 
+        foreach (var dev in new[] { st.Input!, st.Output! })
+        {
+            try
+            {
+                var (vol, muted) = Devices.GetEndpointVolume(dev.Id);
+                if (vol < 0.999f || muted)
+                {
+                    Devices.SetEndpointVolume(dev.Id, 1f, false);
+                    log.Add($"Set the Windows volume of {dev.Name} to 100% (was {vol * 100:F0}%{(muted ? ", muted" : "")}).");
+                }
+            }
+            catch (Exception e) { log.Add($"Could not check the volume of {dev.Name}: {e.Message}"); }
+        }
+
         if (st.CableIsDefaultPlayback)
         {
             var speakers = Devices.List(DeviceFlow.Playback).Where(d => !d.IsVirtualCable).ToList();
@@ -126,39 +145,72 @@ public static class SystemSetup
 
     // ---- VB-CABLE installer helper ----
 
-    private const string CablePage = "https://vb-audio.com/Cable/";
-    private const string FallbackZip = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip";
+    private const string CableSha256 = "bc44e8974191a5a2427d6c979e2dab08dbb09925f3f435dfa2f0ba3e45b6eb90";
+    private static readonly string[] OnlineMirrors =
+    {
+        "https://github.com/GiovMaggi/winmusic/raw/main/third_party/vbcable/VBCABLE_Driver_Pack46.zip",
+        "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip",
+    };
 
     /// <summary>
-    /// Downloads the official VB-CABLE package from vb-audio.com and launches its setup (asks for admin).
-    /// VB-CABLE is donationware by VB-Audio; it is not bundled with WinMusic.
+    /// Gets the official VB-CABLE package. Order: the copy embedded in WinMusic itself (works offline,
+    /// forever) → a VBCABLE_Driver_Pack*.zip next to WinMusic.exe → online mirrors. Returns the zip path.
+    /// </summary>
+    public static async Task<string> GetCablePackage(string dir, IProgress<string>? progress = null)
+    {
+        string zip = Path.Combine(dir, "VBCABLE_Driver_Pack.zip");
+
+        using (var res = typeof(SystemSetup).Assembly.GetManifestResourceStream("VBCABLE_Driver_Pack.zip"))
+        {
+            if (res != null)
+            {
+                progress?.Report("Using the VB-CABLE package built into WinMusic (offline).");
+                await using var f = File.Create(zip);
+                await res.CopyToAsync(f);
+                return zip;
+            }
+        }
+
+        var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? ".";
+        var local = Directory.EnumerateFiles(exeDir, "VBCABLE_Driver_Pack*.zip").OrderDescending().FirstOrDefault();
+        if (local != null)
+        {
+            progress?.Report($"Using {Path.GetFileName(local)} next to WinMusic.");
+            File.Copy(local, zip, true);
+            return zip;
+        }
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("WinMusic/1.0");
+        foreach (var url in OnlineMirrors)
+        {
+            try
+            {
+                progress?.Report($"Downloading VB-CABLE from {new Uri(url).Host}…");
+                var bytes = await http.GetByteArrayAsync(url);
+                if (Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant() != CableSha256)
+                    throw new InvalidDataException("checksum mismatch");
+                await File.WriteAllBytesAsync(zip, bytes);
+                return zip;
+            }
+            catch (Exception e) { progress?.Report($"  failed: {e.Message}"); }
+        }
+        throw new InvalidOperationException("No VB-CABLE package available.");
+    }
+
+    /// <summary>
+    /// Extracts the official, unmodified VB-CABLE package and launches VB-Audio's own setup (asks for admin).
+    /// VB-CABLE is donationware by VB-Audio Software (https://vb-audio.com/Cable/).
     /// </summary>
     public static async Task<string> DownloadAndLaunchCableInstaller(IProgress<string>? progress = null)
     {
-        using var http = new HttpClient();
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("WinMusic/0.1");
-        string url = FallbackZip;
-        try
-        {
-            progress?.Report("Finding the latest VB-CABLE…");
-            string html = await http.GetStringAsync(CablePage);
-            var m = Regex.Matches(html, @"https://download\.vb-audio\.com/Download_CABLE/VBCABLE_Driver_Pack(\d+)\.zip")
-                .OrderByDescending(x => int.Parse(x.Groups[1].Value)).FirstOrDefault();
-            if (m != null) url = m.Value;
-        }
-        catch { }
-
         string dir = Path.Combine(Path.GetTempPath(), "WinMusic-VBCABLE-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(dir);
-        string zip = Path.Combine(dir, "vbcable.zip");
-        progress?.Report("Downloading VB-CABLE…");
-        await using (var s = await http.GetStreamAsync(url))
-        await using (var f = File.Create(zip))
-            await s.CopyToAsync(f);
-        ZipFile.ExtractToDirectory(zip, dir);
+        string zip = await GetCablePackage(dir, progress);
+        ZipFile.ExtractToDirectory(zip, dir, true);
         string setup = Path.Combine(dir, Environment.Is64BitOperatingSystem ? "VBCABLE_Setup_x64.exe" : "VBCABLE_Setup.exe");
         if (!File.Exists(setup)) throw new FileNotFoundException("Setup not found in VB-CABLE package", setup);
-        progress?.Report("Launching VB-CABLE setup (click 'Install Driver')…");
+        progress?.Report("Launching VB-CABLE setup — click “Install Driver”, then restart your PC.");
         var p = Process.Start(new ProcessStartInfo(setup) { UseShellExecute = true, Verb = "runas", WorkingDirectory = dir });
         if (p != null) await p.WaitForExitAsync();
         return dir;

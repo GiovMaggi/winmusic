@@ -45,6 +45,10 @@ jobs:
         with:
           name: selftest
           path: selftest
+      - uses: actions/download-artifact@v4
+        with:
+          name: WinMusic
+          path: app
       - name: Enable Windows audio service
         shell: pwsh
         run: |
@@ -75,11 +79,27 @@ jobs:
           $code = $LASTEXITCODE
           if (Test-Path selftest-report.md) { Get-Content selftest-report.md | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY }
           exit $code
+      - name: GUI end-to-end test (the real WinMusic.exe)
+        if: success() || failure()
+        shell: pwsh
+        run: |
+          $toneDir = "$env:TEMP\WinMusicToneApp"
+          New-Item -ItemType Directory -Force $toneDir | Out-Null
+          Copy-Item selftest\WinMusic.SelfTest.exe "$toneDir\ToneApp.exe"
+          $tone = Start-Process "$toneDir\ToneApp.exe" -ArgumentList '--tone-cable','1000','90','1' -PassThru
+          Start-Sleep 2
+          $gui = Start-Process app\WinMusic.exe -ArgumentList '--smoketest','ToneApp.exe',"$PWD\gui-report.md" -PassThru
+          if (-not $gui.WaitForExit(120000)) { Stop-Process $gui -Force; Write-Host 'GUI test timed out'; $code = 1 } else { $code = $gui.ExitCode }
+          Stop-Process $tone -Force -ErrorAction SilentlyContinue
+          if (Test-Path gui-report.md) { Get-Content gui-report.md; Get-Content gui-report.md | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY } else { Write-Host 'no GUI report'; $code = 1 }
+          exit $code
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: selftest-report
-          path: selftest-report.md
+          path: |
+            selftest-report.md
+            gui-report.md
 
   release:
     name: GitHub release
@@ -87,6 +107,7 @@ jobs:
     needs: [build, device-test]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: WinMusic
@@ -100,4 +121,6 @@ jobs:
           files: |
             dist/WinMusic.exe
             dist/selftest-report.md
+            dist/gui-report.md
+            third_party/vbcable/VBCABLE_Driver_Pack46.zip
           generate_release_notes: true

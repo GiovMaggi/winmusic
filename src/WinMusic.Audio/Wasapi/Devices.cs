@@ -96,6 +96,33 @@ public static class Devices
         return (IAudioClient)o;
     }
 
+    /// <summary>Windows volume slider of a device (0..1) and its mute state.</summary>
+    public static (float volume, bool muted) GetEndpointVolume(string id) => Mta(() =>
+    {
+        var dev = GetDevice(id);
+        var iid = Native.IID_IAudioEndpointVolume;
+        Hr.Check(dev.Activate(ref iid, Native.CLSCTX_ALL, IntPtr.Zero, out object o), "Activate(IAudioEndpointVolume)");
+        var ev = (IAudioEndpointVolume)o;
+        ev.GetMasterVolumeLevelScalar(out float v);
+        ev.GetMute(out bool m);
+        Marshal.ReleaseComObject(ev);
+        Marshal.ReleaseComObject(dev);
+        return (v, m);
+    });
+
+    public static void SetEndpointVolume(string id, float volume, bool mute = false) => Mta(() =>
+    {
+        var dev = GetDevice(id);
+        var iid = Native.IID_IAudioEndpointVolume;
+        Hr.Check(dev.Activate(ref iid, Native.CLSCTX_ALL, IntPtr.Zero, out object o), "Activate(IAudioEndpointVolume)");
+        var ev = (IAudioEndpointVolume)o;
+        var ctx = Guid.Empty;
+        Hr.Check(ev.SetMasterVolumeLevelScalar(volume, ref ctx), "SetMasterVolumeLevelScalar");
+        Hr.Check(ev.SetMute(mute, ref ctx), "SetMute");
+        Marshal.ReleaseComObject(ev);
+        Marshal.ReleaseComObject(dev);
+    });
+
     /// <summary>The format the Windows audio engine mixes at for this device (shared mode).</summary>
     public static WaveFormatInfo GetMixFormat(string id) => Mta(() =>
     {

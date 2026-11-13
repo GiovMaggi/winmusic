@@ -174,7 +174,8 @@ public sealed unsafe class CaptureStream : StreamBase
 /// <summary>Plays audio to a device in shared mode, pulling stereo float from a callback.</summary>
 public sealed unsafe class RenderStream : StreamBase
 {
-    public delegate void FillHandler(Span<float> stereo, int frames, double now);
+    /// <param name="queuedFrames">Frames still waiting in the device buffer (not yet played).</param>
+    public delegate void FillHandler(Span<float> stereo, int frames, double now, int queuedFrames);
 
     private readonly string _deviceId;
     private readonly FillHandler _fill;
@@ -238,7 +239,7 @@ public sealed unsafe class RenderStream : StreamBase
                 int frames = (int)(bufferFrames - padding);
                 if (frames <= 0) continue;
                 var span = stereo.AsSpan(0, frames * 2);
-                _fill(span, frames, AudioClock.Now);
+                _fill(span, frames, AudioClock.Now, (int)padding);
                 Hr.Check(rc.GetBuffer((uint)frames, out IntPtr data), "Render GetBuffer");
                 float* d = (float*)data;
                 if (ch == 2)

@@ -1,8 +1,7 @@
 # Installs VB-CABLE silently on a CI machine (GitHub Actions windows runner).
 $ErrorActionPreference = 'Stop'
-$zip = "$env:RUNNER_TEMP\vbcable.zip"
+$zip = "$PSScriptRoot\..\third_party\vbcable\VBCABLE_Driver_Pack46.zip"   # same copy that's embedded in WinMusic.exe
 $dir = "$env:RUNNER_TEMP\vbcable"
-Invoke-WebRequest 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack46.zip' -OutFile $zip
 Expand-Archive $zip -DestinationPath $dir -Force
 
 # Trust the driver publisher so Windows doesn't show the "Would you like to install this device software?" prompt.

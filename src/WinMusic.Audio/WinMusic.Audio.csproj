@@ -4,6 +4,10 @@
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Official, unmodified VB-CABLE package, embedded so installing works offline forever. -->
+    <EmbeddedResource Include="../../third_party/vbcable/VBCABLE_Driver_Pack46.zip" LogicalName="VBCABLE_Driver_Pack.zip" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../WinMusic.Core/WinMusic.Core.csproj" />
   </ItemGroup>
 </Project>

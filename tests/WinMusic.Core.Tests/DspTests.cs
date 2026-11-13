@@ -139,6 +139,50 @@ public class DspTests
         Assert.InRange(src.BufferedMs, 25, 55);
     }
 
+    /// <summary>
+    /// Realistic model of the real thing: a device with a 22 ms buffer that drains continuously on its
+    /// own clock, render callbacks every ~10 ms with +-3 ms scheduling jitter, producer packets with
+    /// up to 4 ms delivery jitter. This is the case that exposed the padding issue on real Windows.
+    /// </summary>
+    [Theory]
+    [InlineData(176, 2)]
+    [InlineData(-320, 3)]
+    [InlineData(40, 4)]
+    public void DriftSource_RealisticDevice(double ppm, int seed)
+    {
+        const int rate = 48000, packet = 480, devBuf = 1056;
+        var src = new DriftSource(rate, rate, 40);
+        var rnd = new Random(seed);
+        double pp = packet / (rate * (1 + ppm * 1e-6));
+        double tp = 0, nextArr = rnd.NextDouble() * 0.004, tc = 0; long devWritten = 0, phase = 0;
+        var outAll = new List<float>(); var p = new float[packet * 2]; var buf = new float[devBuf * 2];
+        while (tc < 70)
+        {
+            if (tp + nextArr <= tc)
+            {
+                for (int i = 0; i < packet; i++) { float v = (float)(0.5 * Math.Sin(2 * Math.PI * 997 * phase++ / rate)); p[i * 2] = v; p[i * 2 + 1] = v; }
+                src.Write(p, 2, tp); tp += pp; nextArr = rnd.NextDouble() * 0.004; continue;
+            }
+            int padding = (int)Math.Max(0, devWritten - tc * rate);
+            int frames = devBuf - padding;
+            if (frames > 0)
+            {
+                src.Read(buf, frames, tc, padding);
+                if (tc > 12) for (int i = 0; i < frames; i++) outAll.Add(buf[i * 2]);
+                devWritten += frames;
+            }
+            tc += 0.010 + (rnd.NextDouble() - 0.5) * 0.006;
+        }
+        var rep = SineAnalyzer.Analyze(outAll.ToArray(), rate, 997 * (1 + ppm * 1e-6));
+        _out.WriteLine($"ppm={src.CorrectionPpm:F1} underruns={src.Underruns} {rep}");
+        Assert.Equal(0, src.Underruns);
+        Assert.Equal(0, rep.GlitchBlocks);
+        Assert.Equal(0, rep.SilentBlocks);
+        Assert.True(rep.MedianThdNDb < -120, $"median THD+N {rep.MedianThdNDb:F1}");
+        Assert.True(rep.WorstThdNDb < -105, $"worst THD+N {rep.WorstThdNDb:F1}");
+        Assert.InRange(src.CorrectionPpm, ppm - 15, ppm + 15);
+    }
+
     [Fact]
     public void Limiter_IsBitTransparentBelowCeiling()
     {

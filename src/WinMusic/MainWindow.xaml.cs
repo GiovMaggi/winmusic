@@ -29,12 +29,17 @@ public sealed class Settings
 
     public static Settings Load()
     {
+        if (ReadOnly) return new();
         try { return JsonSerializer.Deserialize<Settings>(File.ReadAllText(PathName)) ?? new(); }
         catch { return new(); }
     }
 
+    /// <summary>Set by the automated GUI test so it never touches real user settings.</summary>
+    public static bool ReadOnly;
+
     public void Save()
     {
+        if (ReadOnly) return;
         try
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(PathName)!);
@@ -109,7 +114,66 @@ public partial class MainWindow : Window
         _meterTimer.Start();
         _slowTimer.Start();
 
+        if (App.SmokeTest != null) { _ = RunSmokeTest(App.SmokeTest.Value.exe, App.SmokeTest.Value.report); return; }
         if (_settings.AutoStart && _cable?.Installed == true) StartEngine();
+    }
+
+    /// <summary>
+    /// Automated end-to-end test of the real GUI (run in CI): tick an app in the list, press Start,
+    /// and verify its sound comes out of the virtual mic.
+    /// </summary>
+    private async Task RunSmokeTest(string exe, string reportPath)
+    {
+        var log = new List<string> { "# WinMusic GUI end-to-end test", "" };
+        bool ok = true;
+        void Check(bool c, string what) { log.Add($"- {(c ? "PASS" : "FAIL")}: {what}"); ok &= c; }
+        try
+        {
+            Check(_cable?.Installed == true, "GUI detected VB-CABLE");
+            AppItem? item = null;
+            for (int i = 0; i < 20 && item == null; i++)
+            {
+                await RefreshApps();
+                item = _apps.FirstOrDefault(a => a.ExeName.Equals(exe, StringComparison.OrdinalIgnoreCase));
+                if (item == null) await Task.Delay(500);
+            }
+            Check(item != null, $"app list shows {exe}");
+            log.Add($"- app list: {string.Join(", ", _apps.Select(a => $"{a.DisplayName} [{a.StateText}]"))}");
+            MicCombo.SelectedItem = ((IEnumerable<MicChoice>)MicCombo.ItemsSource).First(c => c.Id == "");
+            if (item != null) item.IsChecked = true;            // same as clicking the checkbox
+            StartBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)); // press Start
+            Check(_engine.IsRunning, "engine started from the Start button");
+            Check((string)LiveText.Text == "LIVE", "UI shows LIVE");
+
+            // let the drift correction lock in (6 s measure + 3 s ramp), then measure WinMusic's own output
+            float maxMusic = 0;
+            for (int i = 0; i < 60; i++) { await Task.Delay(200); maxMusic = Math.Max(maxMusic, _musicLevel); }
+            int rate = _engine.OutputFormat!.SampleRate;
+            var rec = new List<float>();
+            var cap = CaptureStream.ForProcess(Environment.ProcessId, rate, 2, (d, ch, t, silent) => { lock (rec) for (int i = 0; i < d.Length; i += ch) rec.Add(d[i]); });
+            await Task.Run(() => cap.Start());
+            await Task.Delay(8000);
+            cap.Dispose();
+            UpdateStatus();
+            log.Add($"- status:\n```\n{StatusText.Text}\n```");
+            Check(_engine.GetStatus().Any(s => s.Kind == SourceKind.App && s.Playing && s.Underruns == 0), "app source is live with no underruns");
+            Check(maxMusic > 0.1f, $"music meter moving (peak {20 * Math.Log10(Math.Max(maxMusic, 1e-9)):F1} dBFS)");
+            float[] arr; lock (rec) arr = rec.ToArray();
+            var rep = WinMusic.Core.Analysis.SineAnalyzer.Analyze(arr, rate, 1000);
+            log.Add($"- WinMusic output: {rep}");
+            Check(rep.Blocks >= 60 && rep.GlitchBlocks == 0 && rep.SilentBlocks == 0, "clean, continuous audio");
+            Check(rep.MedianThdNDb < -110, $"THD+N below -110 dB ({rep.MedianThdNDb:F1} dB)");
+            Check(Math.Abs(20 * Math.Log10(Math.Max(rep.Amplitude, 1e-9) / 0.5)) < 0.1, "level unchanged at 0 dB");
+
+            StartBtn.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent)); // press Stop
+            Check(!_engine.IsRunning && (string)LiveText.Text == "OFF", "Stop button stops the engine");
+        }
+        catch (Exception e) { log.Add($"- FAIL: exception {e}"); ok = false; }
+        log.Add("");
+        log.Add(ok ? "**GUI RESULT: ALL PASSED**" : "**GUI RESULT: FAILURES**");
+        File.WriteAllText(reportPath, string.Join("\n", log));
+        App.SmokeExitCode = ok ? 0 : 1;
+        Close();
     }
 
     private static bool ProcessLoopbackSupported() => Environment.OSVersion.Version.Build >= 19041;
@@ -143,13 +207,14 @@ public partial class MainWindow : Window
         StartBtn.IsEnabled = true;
         bool good48 = c.InputFormat?.SampleRate == 48000 && c.OutputFormat?.SampleRate == 48000;
         bool ducking = SystemSetup.IsDuckingDisabled();
-        bool ok = good48 && !c.CableIsDefaultPlayback && ducking;
+        bool ok = good48 && !c.CableIsDefaultPlayback && ducking && !c.CableVolumeNot100;
         CableDot.Fill = (Brush)FindResource(ok ? "Good" : "Warn");
         CableText.Text = ok ? "Ready — select “CABLE Output” as your mic in Discord" : "Installed — click “Optimize Windows for music”";
         var issues = new List<string>();
         if (!good48) issues.Add("cable is not at 48 kHz");
         if (c.CableIsDefaultPlayback) issues.Add("your default speakers are set to the cable (you'd hear nothing)");
         if (!ducking) issues.Add("Windows lowers other apps' volume during calls");
+        if (c.CableVolumeNot100) issues.Add("the cable's Windows volume is not 100% (makes your music quieter for friends)");
         CableDetail.Text = $"Cable format: {c.InputFormat?.ToString() ?? "?"}" + (issues.Count > 0 ? "\nTo fix: " + string.Join("; ", issues) : "");
     }
 
