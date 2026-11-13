@@ -51,7 +51,7 @@ public sealed class DriftSource
     private const double MeasureSeconds = 6.0;
     private const double TrackPeriod = 2.0;
     private const double KpTrack = 0.01, KiTrack = 0.00005;
-    private const double KpRescue = 0.05;           // only if the buffer wandered > 15 ms off
+    private const double JumpThreshold = 0.005;     // a 2 s average this far off the setpoint is a jump, not drift
     private const double MaxAdjust = 0.005;         // +-0.5 % (real drift is usually < 0.03 %)
 
 
@@ -79,6 +79,7 @@ public sealed class DriftSource
     public long Underruns { get; private set; }
     public long Overflows { get; private set; }
     public long Resyncs { get; private set; }
+    public long Jumps { get; private set; }
 
     /// <summary>
     /// Producer side (capture thread). Accepts interleaved float with any channel count.
@@ -221,7 +222,17 @@ public sealed class DriftSource
             if (_periodElapsed >= TrackPeriod)
             {
                 double errSec = (_fillSum / _fillCount - _setpoint) / _inRate;
-                double kp = Math.Abs(errSec) > 0.015 ? KpRescue : KpTrack;
+                if (Math.Abs(errSec) > JumpThreshold)
+                {
+                    // The buffer level jumped (e.g. Windows delivered a burst when the app resumed).
+                    // That's not clock drift: don't change the speed to "fix" it, just re-measure and
+                    // hold the new level. (Too high/low is still handled by resync/rebuffer.)
+                    Jumps++;
+                    StartMeasure();
+                    _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
+                    goto applyRamp;
+                }
+                double kp = KpTrack;
                 _integral += errSec * _periodElapsed;
                 double target = kp * errSec + KiTrack * _integral;
                 if (Math.Abs(target) > MaxAdjust)
@@ -233,6 +244,7 @@ public sealed class DriftSource
                 _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
             }
         }
+        applyRamp:
         if (_rampPos < 1)
         {
             _rampPos = Math.Min(1, _rampPos + dt / _rampSeconds);

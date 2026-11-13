@@ -7,7 +7,7 @@ namespace WinMusic.Audio.Engine;
 public enum SourceKind { App, Mic, External }
 
 public sealed record SourceStatus(string Name, SourceKind Kind, int Pid, bool Playing, double BufferedMs, double CorrectionPpm, long Underruns, string? Error,
-    long Resyncs = 0, long Overflows = 0, long CaptureDiscontinuities = 0);
+    long Resyncs = 0, long Overflows = 0, long CaptureDiscontinuities = 0, long Jumps = 0);
 
 /// <summary>Receives exactly what is sent to the virtual cable (after mixing and limiting).</summary>
 public delegate void OutputTapHandler(ReadOnlySpan<float> stereo);
@@ -141,7 +141,7 @@ public sealed class AudioEngine : IDisposable
 
     public List<SourceStatus> GetStatus() => _sources.Select(s => new SourceStatus(
         s.Name, s.Kind, s.Pid, s.Drift.IsPlaying, s.Drift.BufferedMs, s.Drift.CorrectionPpm, s.Drift.Underruns, s.Error,
-        s.Drift.Resyncs, s.Drift.Overflows, s.Capture?.Discontinuities ?? 0)).ToList();
+        s.Drift.Resyncs, s.Drift.Overflows, s.Capture?.Discontinuities ?? 0, s.Drift.Jumps)).ToList();
 
     // ---------- internals ----------
 

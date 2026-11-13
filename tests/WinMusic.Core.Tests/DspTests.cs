@@ -200,10 +200,21 @@ public class DspTests
         var tail = new List<float>(); var p = new float[packet * 2]; var buf = new float[devBuf * 2];
         bool Producing(double t) => !(t is > 20 and < 24);       // 20-24 s: no packets at all
         bool Silent(double t) => t is > 40 and < 44;             // 40-44 s: silent packets
+        bool burstDone = false;
         while (tc < 70)
         {
             if (tp + nextArr <= tc)
             {
+                if (!burstDone && tp > 44)
+                {
+                    // when the app resumes, Windows hands over an extra 20 ms burst (buffer level jumps)
+                    burstDone = true;
+                    for (int b = 0; b < 2; b++)
+                    {
+                        for (int i = 0; i < packet; i++) { float v = (float)(0.5 * Math.Sin(2 * Math.PI * 997 * phase / rate)); phase++; p[i * 2] = v; p[i * 2 + 1] = v; }
+                        src.Write(p, 2, tp + nextArr);
+                    }
+                }
                 if (Producing(tp))
                 {
                     for (int i = 0; i < packet; i++) { float v = Silent(tp) ? 0f : (float)(0.5 * Math.Sin(2 * Math.PI * 997 * phase / rate)); phase++; p[i * 2] = v; p[i * 2 + 1] = v; }
@@ -223,7 +234,7 @@ public class DspTests
             tc += 0.010 + (rnd.NextDouble() - 0.5) * 0.006;
         }
         var rep = SineAnalyzer.Analyze(tail.ToArray(), rate, 997 * (1 + ppm * 1e-6));
-        _out.WriteLine($"ppm={src.CorrectionPpm:F1} underruns={src.Underruns} {rep}");
+        _out.WriteLine($"ppm={src.CorrectionPpm:F1} underruns={src.Underruns} jumps={src.Jumps} {rep}");
         Assert.Equal(1, src.Underruns);
         Assert.Equal(0, rep.GlitchBlocks);
         Assert.Equal(0, rep.SilentBlocks);

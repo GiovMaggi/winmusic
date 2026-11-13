@@ -264,7 +264,7 @@ Say("");
 Say("## E. Music paused and resumed (app closes its audio stream for 4 s, twice)");
 {
     var psi = new ProcessStartInfo(toneApp) { UseShellExecute = false };
-    foreach (var a in new[] { "--tone-pattern", cableIn, "14", "4", "10", "4", "12" }) psi.ArgumentList.Add(a);
+    foreach (var a in new[] { "--tone-pattern", cableIn, "14", "4", "10", "4", "16" }) psi.ArgumentList.Add(a);
     using var child = Process.Start(psi)!;
     using var engine = new AudioEngine();
     engine.SetMicDevice("");
