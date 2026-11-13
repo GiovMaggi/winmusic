@@ -141,8 +141,10 @@ public sealed unsafe class CaptureStream : StreamBase
                     if (next == 0) break;
                     Hr.Check(cap.GetBuffer(out IntPtr data, out uint frames, out uint bflags, out _, out ulong qpc), "Capture GetBuffer");
                     double now = AudioClock.Now;
-                    double t = qpc != 0 && (bflags & 0x4) == 0 ? qpc * 1e-7 : now - frames / rate;
-                    if (Math.Abs(t - now) > 0.5) t = now - frames / rate;
+                    // Timestamp every packet with its arrival time on one consistent clock. (Device QPC
+                    // timestamps were tried: process loopback switches timestamp sources when an app pauses
+                    // and resumes, which looked like a sudden buffer jump to the drift controller.)
+                    double t = now - frames / rate;
                     if ((bflags & Native.AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) != 0 && Packets > 0) Discontinuities++;
                     Packets++;
                     if ((bflags & Native.AUDCLNT_BUFFERFLAGS_SILENT) != 0 || data == IntPtr.Zero)

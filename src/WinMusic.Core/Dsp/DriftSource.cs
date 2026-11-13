@@ -47,6 +47,7 @@ public sealed class DriftSource
     private double _adjust;                         // currently applied correction (fraction)
     private double _adjustFrom, _adjustTo, _rampPos = 1, _rampSeconds = 2;
 
+    private const double MeasureDelay = 1.0;        // let the arrival-time filter fill first
     private const double MeasureSeconds = 6.0;
     private const double TrackPeriod = 2.0;
     private const double KpTrack = 0.01, KiTrack = 0.00005;
@@ -105,11 +106,29 @@ public sealed class DriftSource
         Publish(_ring.Write(c), frames, firstFrameTime);
     }
 
+    // Packet arrival times only ever suffer *late* jitter (thread wake-up delays), never early.
+    // So the earliest arrivals over the last second describe the true stream timeline: we keep a
+    // sliding minimum of (arrival - stream position) and build the timeline from that.
+    private readonly double[] _offT = new double[1024], _offV = new double[1024];
+    private int _offHead, _offCount;
+    private double _lastArrival = double.NaN;
+
     private void Publish(int written, int frames, double firstFrameTime)
     {
         if (written < frames) Overflows++;
         _totalWritten += written;
-        Volatile.Write(ref _stamp, new Stamp(_totalWritten, firstFrameTime + frames / _inRate));
+        double end = firstFrameTime + frames / _inRate;
+        if (!double.IsNaN(_lastArrival) && end - _lastArrival > 0.1) _offCount = 0; // stream paused: start fresh
+        _lastArrival = end;
+        double o = end - _totalWritten / _inRate;
+        int n = _offT.Length;
+        while (_offCount > 0 && _offV[(_offHead + _offCount - 1) % n] >= o) _offCount--;
+        if (_offCount == n) { _offHead = (_offHead + 1) % n; _offCount--; }
+        int tail = (_offHead + _offCount) % n;
+        _offT[tail] = end; _offV[tail] = o; _offCount++;
+        while (_offCount > 1 && _offT[_offHead] < end - 1.0) { _offHead = (_offHead + 1) % n; _offCount--; }
+        double minOffset = _offV[_offHead];
+        Volatile.Write(ref _stamp, new Stamp(_totalWritten, _totalWritten / _inRate + minOffset));
     }
 
     /// <summary>Producer side: write silence (e.g. AUDCLNT_BUFFERFLAGS_SILENT packets).</summary>
@@ -182,8 +201,8 @@ public sealed class DriftSource
         if (_measuring)
         {
             double t = _runTime;
-            _sn++; _st += t; _sy += level; _stt += t * t; _sty += t * level;
-            if (_runTime >= MeasureSeconds)
+            if (t >= MeasureDelay) { _sn++; _st += t; _sy += level; _stt += t * t; _sty += t * level; }
+            if (_runTime >= MeasureDelay + MeasureSeconds)
             {
                 double den = _sn * _stt - _st * _st;
                 double slope = den > 0 ? (_sn * _sty - _st * _sy) / den : 0;   // frames per second

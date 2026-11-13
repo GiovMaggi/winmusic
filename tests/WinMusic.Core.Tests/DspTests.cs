@@ -102,7 +102,7 @@ public class DspTests
         var rnd = new Random(1);
         double producerPeriod = packet / (rate * (1 + ppm * 1e-6));
         double consumerPeriod = packet / (double)rate;
-        double tp = 0, tc = 0;
+        double tp = 0, tc = 0, jitter = rnd.NextDouble() * 0.004;
         long phase = 0;
         var outAll = new List<float>();
         var buf = new float[packet * 2];
@@ -110,7 +110,7 @@ public class DspTests
         while (tc < seconds)
         {
             // producer packets arrive with up to 4 ms jitter but their sample clock is steady
-            double arrive = tp + rnd.NextDouble() * 0.004;
+            double arrive = tp + jitter;
             if (arrive <= tc)
             {
                 var p = new float[packet * 2];
@@ -119,8 +119,9 @@ public class DspTests
                     float v = (float)(0.5 * Math.Sin(2 * Math.PI * 1000 * phase / rate));
                     p[i * 2] = v; p[i * 2 + 1] = v; phase++;
                 }
-                src.Write(p, 2, tp);
+                src.Write(p, 2, arrive); // true arrival time (includes delivery jitter), like the real capture code
                 tp += producerPeriod;
+                jitter = rnd.NextDouble() * 0.004;
                 continue;
             }
             src.Read(buf, packet, tc);
@@ -161,7 +162,7 @@ public class DspTests
             if (tp + nextArr <= tc)
             {
                 for (int i = 0; i < packet; i++) { float v = (float)(0.5 * Math.Sin(2 * Math.PI * 997 * phase++ / rate)); p[i * 2] = v; p[i * 2 + 1] = v; }
-                src.Write(p, 2, tp); tp += pp; nextArr = rnd.NextDouble() * 0.004; continue;
+                src.Write(p, 2, tp + nextArr); tp += pp; nextArr = rnd.NextDouble() * 0.004; continue;
             }
             int padding = (int)Math.Max(0, devWritten - tc * rate);
             int frames = devBuf - padding;
@@ -180,6 +181,53 @@ public class DspTests
         Assert.Equal(0, rep.SilentBlocks);
         Assert.True(rep.MedianThdNDb < -120, $"median THD+N {rep.MedianThdNDb:F1}");
         Assert.True(rep.WorstThdNDb < -105, $"worst THD+N {rep.WorstThdNDb:F1}");
+        Assert.InRange(src.CorrectionPpm, ppm - 15, ppm + 15);
+    }
+
+    /// <summary>
+    /// App pauses (stream stops: nothing arrives), resumes, pauses with silent packets, resumes.
+    /// After each resume the audio must be clean and the clock correction must stay right.
+    /// </summary>
+    [Fact]
+    public void DriftSource_PauseResume()
+    {
+        const int rate = 48000, packet = 480, devBuf = 1056;
+        const double ppm = 150;
+        var src = new DriftSource(rate, rate, 40);
+        var rnd = new Random(9);
+        double pp = packet / (rate * (1 + ppm * 1e-6));
+        double tp = 0, nextArr = rnd.NextDouble() * 0.004, tc = 0; long devWritten = 0, phase = 0;
+        var tail = new List<float>(); var p = new float[packet * 2]; var buf = new float[devBuf * 2];
+        bool Producing(double t) => !(t is > 20 and < 24);       // 20-24 s: no packets at all
+        bool Silent(double t) => t is > 40 and < 44;             // 40-44 s: silent packets
+        while (tc < 70)
+        {
+            if (tp + nextArr <= tc)
+            {
+                if (Producing(tp))
+                {
+                    for (int i = 0; i < packet; i++) { float v = Silent(tp) ? 0f : (float)(0.5 * Math.Sin(2 * Math.PI * 997 * phase / rate)); phase++; p[i * 2] = v; p[i * 2 + 1] = v; }
+                    src.Write(p, 2, tp + nextArr);
+                }
+                else phase += packet;
+                tp += pp; nextArr = rnd.NextDouble() * 0.004; continue;
+            }
+            int padding = (int)Math.Max(0, devWritten - tc * rate);
+            int frames = devBuf - padding;
+            if (frames > 0)
+            {
+                src.Read(buf, frames, tc, padding);
+                if (tc > 58) for (int i = 0; i < frames; i++) tail.Add(buf[i * 2]);
+                devWritten += frames;
+            }
+            tc += 0.010 + (rnd.NextDouble() - 0.5) * 0.006;
+        }
+        var rep = SineAnalyzer.Analyze(tail.ToArray(), rate, 997 * (1 + ppm * 1e-6));
+        _out.WriteLine($"ppm={src.CorrectionPpm:F1} underruns={src.Underruns} {rep}");
+        Assert.Equal(1, src.Underruns);
+        Assert.Equal(0, rep.GlitchBlocks);
+        Assert.Equal(0, rep.SilentBlocks);
+        Assert.True(rep.MedianThdNDb < -120, $"median THD+N {rep.MedianThdNDb:F1}");
         Assert.InRange(src.CorrectionPpm, ppm - 15, ppm + 15);
     }
 
