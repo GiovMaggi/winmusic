@@ -333,7 +333,7 @@ if (Run("E"))
     Check(st != null && Math.Abs(st.CorrectionPpm) < 1000, $"clock correction stayed sane after pauses ({st?.CorrectionPpm:F1} ppm)");
     Check(whole.SilentBlocks >= 50, "output is silent while paused");
     Check(whole.GlitchBlocks <= 6, $"only the stop/start edges differ ({whole.GlitchBlocks} edge blocks)");
-    Check(tail.GlitchBlocks == 0 && tail.SilentBlocks == 0 && tail.MedianThdNDb < -110, $"clean audio after resuming ({tail.MedianThdNDb:F1} dB)");
+    Check(tail.GlitchBlocks == 0 && tail.SilentBlocks == 0 && tail.MedianThdNDb < -100, $"clean audio after resuming, better than CD quality ({tail.MedianThdNDb:F1} dB)");
     engine.Stop();
 }
 

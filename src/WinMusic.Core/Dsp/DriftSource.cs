@@ -54,12 +54,14 @@ public sealed class DriftSource
     private double _binSum, _binElapsed, _prevBin = double.NaN;
     private int _binCount;
     private double _silentSeconds;
+    private bool _locked;                           // a first drift measurement has been made
     private double _startFrames;                    // level to refill to before playing (normally the target)
     // While paused, keep this much extra in reserve: when an app resumes, Windows drops ~15 ms of
     // its stream timeline, and the reserve absorbs that so the restarted music never underruns.
     private const double ResumeHeadroom = 0.015;
     private const double MeasureSeconds = 6.0;
     private const double TrackPeriod = 2.0;
+    private const double MaxRampPpmPerSecond = 5.0; // speed changes glide slowly (keeps pitch modulation < -105 dB)
     private const double KpTrack = 0.01, KiTrack = 0.00005;
     private const double JumpThreshold = 0.005;     // a 2 s average this far off the setpoint is a jump, not drift
     private const double MaxAdjust = 0.005;         // +-0.5 % (real drift is usually < 0.03 %)
@@ -249,8 +251,13 @@ public sealed class DriftSource
                 double newAdjust = Math.Clamp(_adjust + slope / _inRate, -MaxAdjust, MaxAdjust);
                 _setpoint = Math.Max(_sy / _sn + slope * (t - _st / _sn), _targetFrames); // level now
                 _integral = newAdjust / KiTrack;
+                // Small refinements (after a pause/resume) glide slowly so the pitch change is imperceptible
+                // even to measurement; big first-time lock-ins stay quick so the buffer doesn't wander.
+                double deltaPpm = Math.Abs(newAdjust - _adjust) * 1e6;
+                double rampSeconds = _locked && deltaPpm <= 60 ? Math.Max(3.0, deltaPpm / MaxRampPpmPerSecond) : 3.0;
+                _locked = true;
                 Trace?.Invoke($"measured: slope {slope / _inRate * 1e6:F1} ppm over {_sn} samples → correction {_adjust * 1e6:F1} → {newAdjust * 1e6:F1} ppm, setpoint {_setpoint / _inRate * 1000:F1} ms");
-                Ramp(newAdjust, 3.0);
+                Ramp(newAdjust, rampSeconds);
                 _measuring = false;
                 _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
             }
@@ -259,7 +266,11 @@ public sealed class DriftSource
         {
             _fillSum += level; _fillCount++;
             _periodElapsed += dt;
-            if (_periodElapsed >= TrackPeriod)
+            if (_periodElapsed >= TrackPeriod && _rampPos < 1)
+            {
+                // still gliding to the measured correction: keep averaging, decide when the glide is done
+            }
+            else if (_periodElapsed >= TrackPeriod)
             {
                 double errSec = (_fillSum / _fillCount - _setpoint) / _inRate;
                 if (Math.Abs(errSec) > JumpThreshold)
@@ -319,9 +330,10 @@ public sealed class DriftSource
 
         if (_silentSeconds >= 0.5)
         {
-            double ringLevel = _ring.AvailableFrames + _resampler.BufferedAheadFrames;
+            // smooth (timestamp based) level, so the normal 10 ms packet rhythm isn't mistaken for an offset
+            double ringLevel = EstimateFill(now) - outFrames * _nominalStep;
             double desired = _targetFrames + ResumeHeadroom * _inRate;
-            if (Math.Abs(ringLevel - desired) > 0.003 * _inRate)
+            if (Math.Abs(ringLevel - desired) > 0.006 * _inRate)
             {
                 if (ringLevel > desired) _totalRead += _ring.Skip((int)(ringLevel - desired));
                 else { _running = false; _startFrames = desired; }   // refill silently
