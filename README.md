@@ -15,6 +15,7 @@ Your mic ┘
 1. Download **WinMusic.exe** from [Releases](../../releases). It's one file and needs no .NET install.
 2. Open it and click **Install VB-CABLE**. In the VB-CABLE window click **Install Driver**, then **restart your PC**.
    VB-CABLE is a free virtual audio cable (donationware by VB-Audio, <https://vb-audio.com/Cable/>). It's what Windows shows as a microphone.
+   The official, unmodified VB-CABLE package is **built into WinMusic.exe**, so this works offline and keeps working even if the VB-Audio website goes away (see `third_party/vbcable`).
 3. Open WinMusic again and click **Optimize Windows for music**.
 4. Tick **Spotify** (or any app), then click **Start**.
 5. In Discord (or anywhere else) pick **CABLE Output (VB-Audio Virtual Cable)** as your microphone.
@@ -31,7 +32,11 @@ The voice app on the other end compresses your audio. Its "voice cleanup" filter
 - Input Sensitivity: turn off auto and drag the slider fully left, or use Push-to-Talk
 - Voice channels with a higher bitrate (boosted servers, up to 384 kbps) sound much better
 
-In Spotify, set Audio quality to **Lossless** or **Very high**, keep Spotify's volume at 100%, and use WinMusic's Music volume slider instead.
+In Spotify, set Audio quality to **Lossless** or **Very high**.
+
+**Volume (verified on real Windows in CI):**
+- Your speaker or headphone volume does **not** change what friends hear. Use it to set your own listening level.
+- Spotify's own volume slider and its slider in the Windows Volume Mixer **do** change what friends hear. Keep them at 100% and use WinMusic's Music volume slider instead.
 
 ## Why it sounds better than the usual setups
 

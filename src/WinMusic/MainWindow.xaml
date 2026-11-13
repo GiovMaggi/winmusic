@@ -144,7 +144,10 @@
             • Input Sensitivity: turn auto off and drag the slider all the way left (or use Push-to-Talk)<LineBreak/>
             • Higher bitrate voice channels (boosted servers, up to 384 kbps) sound much better<LineBreak/>
             <LineBreak/>
-            <Run FontWeight="SemiBold">In Spotify</Run>: Audio quality “Lossless” or “Very high”, keep Spotify’s own volume at 100% and use the Music volume slider here.<LineBreak/>
+            <Run FontWeight="SemiBold">In Spotify</Run>: Audio quality “Lossless” or “Very high”.<LineBreak/>
+            <LineBreak/>
+            <Run FontWeight="SemiBold">Volume</Run>: to make the music quieter <Run FontStyle="Italic">for yourself</Run>, use your normal speaker/headphone volume — that does not change what friends hear.
+            Keep Spotify’s own volume and its slider in the Windows Volume Mixer at 100% (those DO change what friends hear) and use the Music volume slider above instead.<LineBreak/>
             <LineBreak/>
             Use headphones so your mic doesn’t pick up your friends.
           </TextBlock>

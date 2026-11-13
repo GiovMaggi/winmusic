@@ -150,18 +150,26 @@ public partial class MainWindow : Window
             for (int i = 0; i < 60; i++) { await Task.Delay(200); maxMusic = Math.Max(maxMusic, _musicLevel); }
             int rate = _engine.OutputFormat!.SampleRate;
             var rec = new List<float>();
+            var tap = new List<float>();
             var cap = CaptureStream.ForProcess(Environment.ProcessId, rate, 2, (d, ch, t, silent) => { lock (rec) for (int i = 0; i < d.Length; i += ch) rec.Add(d[i]); });
             await Task.Run(() => cap.Start());
-            await Task.Delay(8000);
+            await Task.Delay(500);
+            _engine.OutputTap = d => { lock (tap) for (int i = 0; i < d.Length; i += 2) tap.Add(d[i]); };
+            await Task.Delay(20000);
+            _engine.OutputTap = null;
+            await Task.Delay(500);
             cap.Dispose();
             UpdateStatus();
             log.Add($"- status:\n```\n{StatusText.Text}\n```");
+            foreach (var st in _engine.GetStatus()) log.Add($"- source detail: {st}");
             Check(_engine.GetStatus().Any(s => s.Kind == SourceKind.App && s.Playing && s.Underruns == 0), "app source is live with no underruns");
             Check(maxMusic > 0.1f, $"music meter moving (peak {20 * Math.Log10(Math.Max(maxMusic, 1e-9)):F1} dBFS)");
-            float[] arr; lock (rec) arr = rec.ToArray();
+            float[] arr; lock (tap) arr = tap.ToArray();
             var rep = WinMusic.Core.Analysis.SineAnalyzer.Analyze(arr, rate, 1000);
-            log.Add($"- WinMusic output: {rep}");
-            Check(rep.Blocks >= 60 && rep.GlitchBlocks == 0 && rep.SilentBlocks == 0, "clean, continuous audio");
+            log.Add($"- WinMusic output, exactly what is sent to the cable (20 s): {rep}");
+            float[] lb; lock (rec) lb = rec.ToArray();
+            log.Add($"- same output seen through Windows process loopback (21 s, incl. capture start/stop): {WinMusic.Core.Analysis.SineAnalyzer.Analyze(lb, rate, 1000)}");
+            Check(rep.Blocks >= 190 && rep.GlitchBlocks == 0 && rep.SilentBlocks == 0, "clean, continuous audio for 20 s");
             Check(rep.MedianThdNDb < -110, $"THD+N below -110 dB ({rep.MedianThdNDb:F1} dB)");
             Check(Math.Abs(20 * Math.Log10(Math.Max(rep.Amplitude, 1e-9) / 0.5)) < 0.1, "level unchanged at 0 dB");
 

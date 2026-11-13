@@ -6,7 +6,11 @@ namespace WinMusic.Audio.Engine;
 
 public enum SourceKind { App, Mic, External }
 
-public sealed record SourceStatus(string Name, SourceKind Kind, int Pid, bool Playing, double BufferedMs, double CorrectionPpm, long Underruns, string? Error);
+public sealed record SourceStatus(string Name, SourceKind Kind, int Pid, bool Playing, double BufferedMs, double CorrectionPpm, long Underruns, string? Error,
+    long Resyncs = 0, long Overflows = 0, long CaptureDiscontinuities = 0);
+
+/// <summary>Receives exactly what is sent to the virtual cable (after mixing and limiting).</summary>
+public delegate void OutputTapHandler(ReadOnlySpan<float> stereo);
 
 /// <summary>
 /// The WinMusic mixer:  [app captures] + [mic]  →  drift-compensated  →  mix (32-bit float)
@@ -50,6 +54,7 @@ public sealed class AudioEngine : IDisposable
     private float _peakMusic, _peakMic, _peakOut, _minLimiterGain = 1f;
 
     public event Action<string>? Log;
+    public OutputTapHandler? OutputTap;
     public bool IsRunning => _render != null && !_stop;
     public WaveFormatInfo? OutputFormat => _render?.Format;
     public string? OutputDeviceName { get; private set; }
@@ -135,7 +140,8 @@ public sealed class AudioEngine : IDisposable
     }
 
     public List<SourceStatus> GetStatus() => _sources.Select(s => new SourceStatus(
-        s.Name, s.Kind, s.Pid, s.Drift.IsPlaying, s.Drift.BufferedMs, s.Drift.CorrectionPpm, s.Drift.Underruns, s.Error)).ToList();
+        s.Name, s.Kind, s.Pid, s.Drift.IsPlaying, s.Drift.BufferedMs, s.Drift.CorrectionPpm, s.Drift.Underruns, s.Error,
+        s.Drift.Resyncs, s.Drift.Overflows, s.Capture?.Discontinuities ?? 0)).ToList();
 
     // ---------- internals ----------
 
@@ -181,6 +187,7 @@ public sealed class AudioEngine : IDisposable
         }
 
         _limiter!.Process(output, frames);
+        OutputTap?.Invoke(output.Slice(0, frames * 2));
         float pOut = 0;
         for (int i = 0; i < frames * 2; i++) { float a = Math.Abs(output[i]); if (a > pOut) pOut = a; }
 

@@ -6,11 +6,12 @@ public readonly record struct SineFit(double Frequency, double Amplitude, double
 /// <summary>Summary over a long recording split into blocks.</summary>
 public sealed record SineReport(
     int Blocks, double Frequency, double Amplitude,
-    double MedianThdNDb, double WorstThdNDb, int GlitchBlocks, int SilentBlocks)
+    double MedianThdNDb, double WorstThdNDb, int GlitchBlocks, int SilentBlocks, string GlitchAt = "", int TotalBlocks = 0)
 {
     public override string ToString() =>
         $"blocks={Blocks} freq={Frequency:F3}Hz amp={Amplitude:F5} ({20 * Math.Log10(Math.Max(Amplitude, 1e-12)):F2} dBFS) " +
-        $"THD+N median={MedianThdNDb:F1} dB worst={WorstThdNDb:F1} dB glitchBlocks={GlitchBlocks} silentBlocks={SilentBlocks}";
+        $"THD+N median={MedianThdNDb:F1} dB worst={WorstThdNDb:F1} dB glitchBlocks={GlitchBlocks} silentBlocks={SilentBlocks}" +
+        (GlitchAt.Length > 0 ? $" glitchAt=[{GlitchAt}] of {TotalBlocks} blocks" : "");
 }
 
 /// <summary>
@@ -88,13 +89,16 @@ public static class SineAnalyzer
     public static SineReport Analyze(ReadOnlySpan<float> mono, double sampleRate, double freqGuess, int blockSize = 4800, double glitchThresholdDb = -60)
     {
         var fits = new List<SineFit>();
-        int silent = 0;
-        for (int off = 0; off + blockSize <= mono.Length; off += blockSize)
+        var glitchAt = new List<string>();
+        int silent = 0, index = 0;
+        for (int off = 0; off + blockSize <= mono.Length; off += blockSize, index++)
         {
             var blk = mono.Slice(off, blockSize);
             double peak = 0; foreach (var v in blk) peak = Math.Max(peak, Math.Abs(v));
             if (peak < 1e-4) { silent++; continue; }
-            fits.Add(Fit(blk, sampleRate, freqGuess));
+            var fit = Fit(blk, sampleRate, freqGuess);
+            if (fit.ThdNDb > glitchThresholdDb) glitchAt.Add($"{index}:{fit.ThdNDb:F0}dB");
+            fits.Add(fit);
         }
         if (fits.Count == 0) return new SineReport(0, 0, 0, 0, 0, 0, silent);
         var thd = fits.Select(f => f.ThdNDb).OrderBy(v => v).ToArray();
@@ -103,6 +107,6 @@ public static class SineAnalyzer
         return new SineReport(fits.Count,
             fits.Select(f => f.Frequency).OrderBy(v => v).ElementAt(fits.Count / 2),
             fits.Select(f => f.Amplitude).OrderBy(v => v).ElementAt(fits.Count / 2),
-            median, thd[^1], glitches, silent);
+            median, thd[^1], glitches, silent, string.Join(" ", glitchAt), index);
     }
 }
