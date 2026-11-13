@@ -123,7 +123,9 @@
       </Border>
 
       <Button x:Name="StartBtn" Content="▶  Start" Style="{StaticResource BigButton}" Click="OnStartStop" Margin="0,0,0,6"/>
-      <CheckBox x:Name="AutoStart" Content="Start automatically when WinMusic opens" Margin="2,0,0,12" Foreground="{StaticResource Muted}"/>
+      <CheckBox x:Name="AutoStart" Content="Go live automatically when WinMusic opens" Margin="2,0,0,4" Foreground="{StaticResource Muted}"/>
+      <CheckBox x:Name="LaunchAtLogin" Content="Open WinMusic when Windows starts (minimized, goes live by itself)" Margin="2,0,0,12" Foreground="{StaticResource Muted}"
+                Checked="OnLaunchAtLogin" Unchecked="OnLaunchAtLogin"/>
 
       <!-- Status -->
       <Border Style="{StaticResource CardStyle}">
@@ -138,11 +140,13 @@
         <StackPanel>
           <TextBlock Text="FOR THE BEST SOUND ON THE OTHER END" Style="{StaticResource Heading}"/>
           <TextBlock TextWrapping="Wrap" LineHeight="20">
-            <Run FontWeight="SemiBold">In Discord</Run> (Settings → Voice &amp; Video):<LineBreak/>
-            • Input Device: <Run FontWeight="SemiBold">CABLE Output (VB-Audio Virtual Cable)</Run><LineBreak/>
-            • Noise Suppression: <Run FontWeight="SemiBold">None</Run> · Echo Cancellation: <Run FontWeight="SemiBold">Off</Run> · Automatic Gain Control: <Run FontWeight="SemiBold">Off</Run><LineBreak/>
-            • Input Sensitivity: turn auto off and drag the slider all the way left (or use Push-to-Talk)<LineBreak/>
-            • Higher bitrate voice channels (boosted servers, up to 384 kbps) sound much better<LineBreak/>
+            <Run FontWeight="SemiBold">In Fortnite / Rocket League</Run> (Settings → Audio → Voice Chat):<LineBreak/>
+            • Voice chat input device: <Run FontWeight="SemiBold">CABLE Output (VB-Audio Virtual Cable)</Run><LineBreak/>
+            • Use open mic (not push-to-talk) so the music isn’t cut off<LineBreak/>
+            • If a game has no input device setting: Windows Sound settings → Input → choose CABLE Output as default<LineBreak/>
+            • Game voice chat is made for speech, so it will sound like good voice-chat quality. If it pumps or cuts out on quiet parts, lower Music volume to about −6 dB<LineBreak/>
+            <LineBreak/>
+            <Run FontWeight="SemiBold">In Discord</Run>: input device CABLE Output; turn off Noise Suppression, Echo Cancellation and Automatic Gain Control.<LineBreak/>
             <LineBreak/>
             <Run FontWeight="SemiBold">In Spotify</Run>: Audio quality “Lossless” or “Very high”.<LineBreak/>
             <LineBreak/>

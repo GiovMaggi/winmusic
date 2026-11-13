@@ -242,6 +242,60 @@ public class DspTests
         Assert.InRange(src.CorrectionPpm, ppm - 15, ppm + 15);
     }
 
+    /// <summary>
+    /// What real Windows process loopback does (measured in CI): packets keep flowing while the app is
+    /// paused (as zeros), but every time the app stops or starts its stream ~15 ms of timeline goes
+    /// missing. Music must be clean after each resume, the clock estimate must not be fooled, and
+    /// there must be no underruns.
+    /// </summary>
+    [Fact]
+    public void DriftSource_TimelineStepsOnPauseResume()
+    {
+        const int rate = 48000, packet = 480, devBuf = 1056;
+        const double ppm = -60;
+        var src = new DriftSource(rate, rate, 40);
+        var traces = new List<string>();
+        src.Trace = m => traces.Add(m);
+        var rnd = new Random(11);
+        double pp = packet / (rate * (1 + ppm * 1e-6));
+        double tp = 0, nextArr = rnd.NextDouble() * 0.004, tc = 0; long devWritten = 0, phase = 0;
+        var tail = new List<float>(); var p = new float[packet * 2]; var buf = new float[devBuf * 2];
+        double[] transitions = { 14, 18, 28, 32, 50, 54 };      // stop, start, stop, start, ...
+        int nextTr = 0;
+        bool Paused(double t) => t is (> 14 and < 18) or (> 28 and < 32) or (> 50 and < 54);
+        while (tc < 75)
+        {
+            if (tp + nextArr <= tc)
+            {
+                if (nextTr < transitions.Length && tp >= transitions[nextTr])
+                {
+                    tp += 0.015; nextTr++;            // 15 ms of timeline silently lost
+                    continue;
+                }
+                for (int i = 0; i < packet; i++) { float v = Paused(tp) ? 0f : (float)(0.5 * Math.Sin(2 * Math.PI * 997 * phase / rate)); phase++; p[i * 2] = v; p[i * 2 + 1] = v; }
+                src.Write(p, 2, tp + nextArr);
+                tp += pp; nextArr = rnd.NextDouble() * 0.004; continue;
+            }
+            int padding = (int)Math.Max(0, devWritten - tc * rate);
+            int frames = devBuf - padding;
+            if (frames > 0)
+            {
+                src.Read(buf, frames, tc, padding);
+                if (tc > 66) for (int i = 0; i < frames; i++) tail.Add(buf[i * 2]);
+                devWritten += frames;
+            }
+            tc += 0.010 + (rnd.NextDouble() - 0.5) * 0.006;
+        }
+        var rep = SineAnalyzer.Analyze(tail.ToArray(), rate, 997 * (1 + ppm * 1e-6));
+        foreach (var t in traces) _out.WriteLine(t);
+        _out.WriteLine($"ppm={src.CorrectionPpm:F1} underruns={src.Underruns} jumps={src.Jumps} buffered={src.BufferedMs:F1} {rep}");
+        Assert.Equal(0, src.Underruns);
+        Assert.Equal(0, rep.GlitchBlocks);
+        Assert.Equal(0, rep.SilentBlocks);
+        Assert.True(rep.MedianThdNDb < -120, $"median THD+N {rep.MedianThdNDb:F1}");
+        Assert.InRange(src.CorrectionPpm, ppm - 15, ppm + 15);
+    }
+
     [Fact]
     public void Limiter_IsBitTransparentBelowCeiling()
     {

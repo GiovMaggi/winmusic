@@ -48,6 +48,16 @@ public sealed class DriftSource
     private double _adjustFrom, _adjustTo, _rampPos = 1, _rampSeconds = 2;
 
     private const double MeasureDelay = 1.0;        // let the arrival-time filter fill first
+    private const double BinSeconds = 0.25;         // step detector resolution
+    private const double StepThreshold = 0.004;     // a 4 ms change between 250 ms averages is a step, not drift
+    private double _measureT0;
+    private double _binSum, _binElapsed, _prevBin = double.NaN;
+    private int _binCount;
+    private double _silentSeconds;
+    private double _startFrames;                    // level to refill to before playing (normally the target)
+    // While paused, keep this much extra in reserve: when an app resumes, Windows drops ~15 ms of
+    // its stream timeline, and the reserve absorbs that so the restarted music never underruns.
+    private const double ResumeHeadroom = 0.015;
     private const double MeasureSeconds = 6.0;
     private const double TrackPeriod = 2.0;
     private const double KpTrack = 0.01, KiTrack = 0.00005;
@@ -68,6 +78,7 @@ public sealed class DriftSource
         _resampler = new SincResampler(_nominalStep);
         _targetFrames = targetLatencyMs / 1000.0 * inRate;
         _maxFrames = _targetFrames + 0.12 * inRate;
+        _startFrames = _targetFrames;
     }
 
     public int InputRate => (int)_inRate;
@@ -148,6 +159,8 @@ public sealed class DriftSource
         // keep _adjust: the drift between two devices doesn't change when music pauses, we just refine it
         _measuring = true;
         _runTime = 0;
+        _measureT0 = 0;
+        _prevBin = double.NaN; _binSum = 0; _binCount = 0; _binElapsed = 0;
         _sn = _st = _sy = _stt = _sty = 0;
         _adjustFrom = _adjustTo = _adjust; _rampPos = 1;
     }
@@ -179,8 +192,9 @@ public sealed class DriftSource
 
         if (!_running)
         {
-            if (fill >= _targetFrames)
+            if (fill >= _startFrames)
             {
+                _startFrames = _targetFrames;
                 _running = true;
                 StartMeasure();
                 Trace?.Invoke($"start: level {fill / _inRate * 1000:F1} ms, keeping {_adjust * 1e6:F1} ppm");
@@ -203,16 +217,37 @@ public sealed class DriftSource
 
         double level = EstimateFill(now) + queuedOutputFrames * _nominalStep;
         _runTime += dt;
+
+        // Step detector: compare consecutive 250 ms averages of the buffer level. Clock drift moves
+        // the level by microseconds per 250 ms; a jump of several ms is a stream event (app paused,
+        // resumed, burst) and must never be mistaken for drift.
+        _binSum += level; _binCount++; _binElapsed += dt;
+        bool stepDetected = false;
+        if (_binElapsed >= BinSeconds)
+        {
+            double bin = _binSum / _binCount;
+            if (!double.IsNaN(_prevBin) && Math.Abs(bin - _prevBin) > StepThreshold * _inRate) stepDetected = true;
+            _prevBin = bin;
+            _binSum = 0; _binCount = 0; _binElapsed = 0;
+        }
+        if (stepDetected)
+        {
+            Jumps++;
+            Trace?.Invoke($"step: level moved suddenly to {_prevBin / _inRate * 1000:F1} ms → {(_measuring ? "restart measurement" : "re-measure")}");
+            if (_measuring) { _measureT0 = _runTime; _sn = _st = _sy = _stt = _sty = 0; }
+            else { StartMeasure(); _measureT0 = _runTime; }
+        }
+
         if (_measuring)
         {
-            double t = _runTime;
+            double t = _runTime - _measureT0;
             if (t >= MeasureDelay) { _sn++; _st += t; _sy += level; _stt += t * t; _sty += t * level; }
-            if (_runTime >= MeasureDelay + MeasureSeconds)
+            if (t >= MeasureDelay + MeasureSeconds)
             {
                 double den = _sn * _stt - _st * _st;
                 double slope = den > 0 ? (_sn * _sty - _st * _sy) / den : 0;   // frames per second
                 double newAdjust = Math.Clamp(_adjust + slope / _inRate, -MaxAdjust, MaxAdjust);
-                _setpoint = Math.Max(_sy / _sn + slope * (_runTime - _st / _sn), _targetFrames); // level now
+                _setpoint = Math.Max(_sy / _sn + slope * (t - _st / _sn), _targetFrames); // level now
                 _integral = newAdjust / KiTrack;
                 Trace?.Invoke($"measured: slope {slope / _inRate * 1e6:F1} ppm over {_sn} samples → correction {_adjust * 1e6:F1} → {newAdjust * 1e6:F1} ppm, setpoint {_setpoint / _inRate * 1000:F1} ms");
                 Ramp(newAdjust, 3.0);
@@ -278,5 +313,21 @@ public sealed class DriftSource
             _resampler.CommitInput(need);
         }
         _resampler.Produce(dst, outFrames, step);
+        float peak = 0;
+        for (int i = 0; i < outFrames * 2; i++) { float a = Math.Abs(dst[i]); if (a > peak) peak = a; }
+        _silentSeconds = peak < 1e-4f ? _silentSeconds + dt : 0;
+
+        if (_silentSeconds >= 0.5)
+        {
+            double ringLevel = _ring.AvailableFrames + _resampler.BufferedAheadFrames;
+            double desired = _targetFrames + ResumeHeadroom * _inRate;
+            if (Math.Abs(ringLevel - desired) > 0.003 * _inRate)
+            {
+                if (ringLevel > desired) _totalRead += _ring.Skip((int)(ringLevel - desired));
+                else { _running = false; _startFrames = desired; }   // refill silently
+                Trace?.Invoke($"silence: buffer re-centred from {ringLevel / _inRate * 1000:F1} to {desired / _inRate * 1000:F1} ms");
+                _silentSeconds = 0;   // don't re-check every callback
+            }
+        }
     }
 }

@@ -104,6 +104,10 @@ jobs:
           Start-Sleep 2
           $gui = Start-Process app\WinMusic.exe -ArgumentList '--smoketest','ToneApp.exe',"$PWD\gui-report.md" -PassThru
           if (-not $gui.WaitForExit(120000)) { Stop-Process $gui -Force; Write-Host 'GUI test timed out'; $code = 1 } else { $code = $gui.ExitCode }
+          if (Test-Path gui-report.md) { Get-Content gui-report.md }
+          $gui2 = Start-Process app\WinMusic.exe -ArgumentList '--smoketest-startup','ToneApp.exe',"$PWD\gui-startup-report.md" -PassThru
+          if (-not $gui2.WaitForExit(120000)) { Stop-Process $gui2 -Force; Write-Host 'startup GUI test timed out'; $code = 1 } elseif ($gui2.ExitCode -ne 0) { $code = 1 }
+          if (Test-Path gui-startup-report.md) { Get-Content gui-startup-report.md; Get-Content gui-startup-report.md | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY } else { Write-Host 'no startup report'; $code = 1 }
           Stop-Process $tone -Force -ErrorAction SilentlyContinue
           if (Test-Path gui-report.md) { Get-Content gui-report.md; Get-Content gui-report.md | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY } else { Write-Host 'no GUI report'; $code = 1 }
           exit $code
@@ -115,6 +119,7 @@ jobs:
             selftest-report.md
             gui-report.md
             gui-nocable-report.md
+            gui-startup-report.md
 
   release:
     name: GitHub release

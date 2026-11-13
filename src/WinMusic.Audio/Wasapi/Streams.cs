@@ -76,6 +76,9 @@ public sealed unsafe class CaptureStream : StreamBase
 
     public long Packets { get; private set; }
     public long Discontinuities { get; private set; }
+    /// <summary>Times the device position skipped ahead (frames missing from the stream) and we filled with silence.</summary>
+    public long PositionGaps { get; private set; }
+    public long GapFrames { get; private set; }
 
     private CaptureStream(string? deviceId, int pid, int rate, int ch, DataHandler handler)
     {
@@ -131,6 +134,7 @@ public sealed unsafe class CaptureStream : StreamBase
             int ch = Format.Channels;
             double rate = Format.SampleRate;
             var silence = new float[ch * 4800];
+            ulong expectedPos = 0;
             while (!StopRequested)
             {
                 Native.WaitForSingleObject(evt, 100);
@@ -139,13 +143,26 @@ public sealed unsafe class CaptureStream : StreamBase
                     int hr = cap.GetNextPacketSize(out uint next);
                     Hr.Check(hr, "GetNextPacketSize");
                     if (next == 0) break;
-                    Hr.Check(cap.GetBuffer(out IntPtr data, out uint frames, out uint bflags, out _, out ulong qpc), "Capture GetBuffer");
+                    Hr.Check(cap.GetBuffer(out IntPtr data, out uint frames, out uint bflags, out ulong devPos, out ulong qpc), "Capture GetBuffer");
                     double now = AudioClock.Now;
                     // Timestamp every packet with its arrival time on one consistent clock. (Device QPC
                     // timestamps were tried: process loopback switches timestamp sources when an app pauses
                     // and resumes, which looked like a sudden buffer jump to the drift controller.)
                     double t = now - frames / rate;
                     if ((bflags & Native.AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) != 0 && Packets > 0) Discontinuities++;
+
+                    // If the device position skipped ahead, frames are missing from the stream (process loopback
+                    // does this when the app starts/stops its own stream). Fill the hole with silence so the
+                    // timeline stays continuous; it always happens at a start/stop boundary, so it's inaudible.
+                    if (Packets > 0 && devPos > expectedPos && devPos - expectedPos < (ulong)rate)
+                    {
+                        int gap = (int)(devPos - expectedPos);
+                        PositionGaps++; GapFrames += gap;
+                        int n = gap * ch;
+                        if (silence.Length < n) silence = new float[n];
+                        _handler(silence.AsSpan(0, n), ch, t - gap / rate, true);
+                    }
+                    expectedPos = devPos + frames;
                     Packets++;
                     if ((bflags & Native.AUDCLNT_BUFFERFLAGS_SILENT) != 0 || data == IntPtr.Zero)
                     {

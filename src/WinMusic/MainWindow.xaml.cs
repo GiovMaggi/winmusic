@@ -101,6 +101,8 @@ public partial class MainWindow : Window
         MicSlider.Value = _settings.MicGainDb;
         MicMute.IsChecked = _settings.MicMuted;
         AutoStart.IsChecked = _settings.AutoStart;
+        try { LaunchAtLogin.IsChecked = StartupManager.IsEnabled(); } catch { }
+        if (App.LaunchedAtLogin) WindowState = WindowState.Minimized;
         ShowAllApps.IsChecked = _settings.ShowAllApps;
         UpdateGainLabels();
 
@@ -115,8 +117,82 @@ public partial class MainWindow : Window
         _slowTimer.Start();
 
         if (App.SmokeTest is { exe: "" } nc) { RunNoCableSmokeTest(nc.report); return; }
+        if (App.SmokeTest is { } su && su.exe.StartsWith("@startup:")) { _ = RunStartupSmokeTest(su.exe["@startup:".Length..], su.report); return; }
         if (App.SmokeTest != null) { _ = RunSmokeTest(App.SmokeTest.Value.exe, App.SmokeTest.Value.report); return; }
+        if (App.LaunchedAtLogin) { _ = GoLiveAfterLogin(); return; }
         if (_settings.AutoStart && _cable?.Installed == true) StartEngine();
+    }
+
+    /// <summary>
+    /// Right after Windows starts, audio devices can take a while to appear. Keep trying quietly
+    /// (no error pop-ups) for up to 3 minutes until the virtual cable is there, then go live.
+    /// </summary>
+    private async Task GoLiveAfterLogin()
+    {
+        for (int attempt = 0; attempt < 60 && !_engine.IsRunning; attempt++)
+        {
+            await RefreshCable();
+            if (_cable?.Installed == true)
+            {
+                StartEngine(quiet: true);
+                if (_engine.IsRunning) { AddLog("Started automatically at login."); return; }
+            }
+            await Task.Delay(3000);
+        }
+        if (!_engine.IsRunning) AddLog("Could not go live automatically (virtual cable not found). Press Start.");
+    }
+
+    private void OnLaunchAtLogin(object sender, RoutedEventArgs e)
+    {
+        if (_loading || App.SmokeTest != null && !_allowStartupChangeInTest) return;
+        try
+        {
+            if (LaunchAtLogin.IsChecked == true) { StartupManager.Enable(); AddLog($"WinMusic will open when Windows starts ({StartupManager.InstalledExe})."); }
+            else { StartupManager.Disable(); AddLog("WinMusic will no longer open when Windows starts."); }
+        }
+        catch (Exception ex)
+        {
+            AddLog("Could not change startup setting: " + ex.Message);
+            _loading = true; LaunchAtLogin.IsChecked = StartupManager.IsEnabled(); _loading = false;
+        }
+    }
+
+    private bool _allowStartupChangeInTest;
+
+    /// <summary>CI: simulates a login launch and checks the startup checkbox really registers/unregisters.</summary>
+    private async Task RunStartupSmokeTest(string exe, string reportPath)
+    {
+        var log = new List<string> { "# WinMusic GUI test: launch at Windows login", "" };
+        bool ok = true;
+        void Check(bool c, string what) { log.Add($"- {(c ? "PASS" : "FAIL")}: {what}"); ok &= c; }
+        try
+        {
+            Check(WindowState == WindowState.Minimized, "opens minimized");
+            _settings.Apps = new() { exe };
+            _settings.MicDeviceId = "";
+            await GoLiveAfterLogin();
+            Check(_engine.IsRunning && (string)LiveText.Text == "LIVE", "went live by itself");
+            for (int i = 0; i < 20 && !_engine.GetStatus().Any(s => s.Kind == SourceKind.App && s.Playing); i++) await Task.Delay(500);
+            Check(_engine.GetStatus().Any(s => s.Kind == SourceKind.App && s.Playing), $"captures {exe} without any clicks");
+
+            _allowStartupChangeInTest = true;
+            LaunchAtLogin.IsChecked = true;
+            var cmd = StartupManager.RegisteredCommand();
+            log.Add($"- registered: `{cmd}`");
+            Check(cmd != null && cmd.Contains(StartupManager.InstalledExe) && cmd.Contains(StartupManager.StartupArg), "checkbox registers WinMusic to run at login");
+            Check(File.Exists(StartupManager.InstalledExe) && new FileInfo(StartupManager.InstalledExe).Length == new FileInfo(Environment.ProcessPath!).Length,
+                "copied itself to a permanent folder (safe to delete the downloaded file)");
+            Check(StartupManager.IsEnabled(), "reports enabled");
+            LaunchAtLogin.IsChecked = false;
+            Check(StartupManager.RegisteredCommand() == null && !StartupManager.IsEnabled(), "unchecking removes it again");
+            StopEngine();
+        }
+        catch (Exception e) { log.Add($"- FAIL: exception {e}"); ok = false; }
+        log.Add("");
+        log.Add(ok ? "**GUI (startup) RESULT: ALL PASSED**" : "**GUI (startup) RESULT: FAILURES**");
+        File.WriteAllText(reportPath, string.Join("\n", log));
+        App.SmokeExitCode = ok ? 0 : 1;
+        Close();
     }
 
     /// <summary>First launch on a PC without VB-CABLE: must not crash, must offer the installer.</summary>
@@ -409,7 +485,7 @@ public partial class MainWindow : Window
         if (_engine.IsRunning) StopEngine(); else StartEngine();
     }
 
-    private void StartEngine()
+    private void StartEngine(bool quiet = false)
     {
         try
         {
@@ -424,7 +500,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             AddLog("Start failed: " + ex.Message);
-            MessageBox.Show(this, ex.Message, "WinMusic", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (!quiet) MessageBox.Show(this, ex.Message, "WinMusic", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         UpdateRunState();
     }
