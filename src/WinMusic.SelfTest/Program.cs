@@ -50,6 +50,19 @@ string cableIn = status.Input!.Id, cableOut = status.Output!.Id;
 int outRate = Devices.GetMixFormat(cableIn).SampleRate;
 int recRate = Devices.GetMixFormat(cableOut).SampleRate;
 
+// ---------------------------------------------------------------- 0
+Say("");
+Say("## 0. Baseline: VB-CABLE by itself (tone app → CABLE Input → CABLE Output, no WinMusic)");
+{
+    using var child = StartTone(cableIn, 1000, 9, 1f);
+    Thread.Sleep(1000);
+    var rec = Record(cableOut, 6000);
+    var rep = SineAnalyzer.Analyze(TrimSilence(rec), recRate, 1000);
+    Say($"- {rep}");
+    Say("- (informational: this is the quality limit of the virtual cable itself)");
+    child.Kill(); child.WaitForExit();
+}
+
 // ---------------------------------------------------------------- A
 Say("");
 Say("## A. Per-app capture (process loopback) of a 1 kHz tone");
@@ -105,8 +118,15 @@ Say("## B. Engine → CABLE Input → CABLE Output, from a source on a different
     }) { IsBackground = true, Priority = ThreadPriority.Highest };
     genThread.Start();
 
+    var pre = new List<float>();
+    using var selfCap = CaptureStream.ForProcess(Environment.ProcessId, outRate, 2, (d, ch, t, silent) => { lock (pre) for (int i = 0; i < d.Length; i += ch) pre.Add(d[i]); });
+    selfCap.Start();
     var rec = Record(cableOut, 14000);
+    selfCap.Dispose();
     stopGen = true; genThread.Join();
+    float[] preArr; lock (pre) preArr = pre.ToArray();
+    var preRep = SineAnalyzer.Analyze(preArr.Skip(outRate * 4).ToArray(), outRate, 997);
+    Say($"- WinMusic output before it enters VB-CABLE: {preRep}");
     var st = engine.GetStatus().First();
     Say($"- engine output {engine.OutputFormat}, source buffered {st.BufferedMs:F1} ms, clock correction {st.CorrectionPpm:F1} ppm, underruns {st.Underruns}");
     var settled = rec.Skip(recRate * 4).ToArray(); // let the drift loop lock in

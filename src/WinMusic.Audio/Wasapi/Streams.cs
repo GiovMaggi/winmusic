@@ -201,7 +201,9 @@ public sealed unsafe class RenderStream : StreamBase
         IAudioRenderClient? rc = null;
         try
         {
-            uint flags = Native.AUDCLNT_STREAMFLAGS_EVENTCALLBACK | Native.AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | Native.AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+            // NOPERSIST: Windows must not remember a lowered/muted per-app volume for us; we always start at exactly 100 %.
+            uint flags = Native.AUDCLNT_STREAMFLAGS_EVENTCALLBACK | Native.AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
+                         Native.AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY | Native.AUDCLNT_STREAMFLAGS_NOPERSIST;
             Hr.Check(client.Initialize(Native.AUDCLNT_SHAREMODE_SHARED, flags, 200_000, 0, fmt, IntPtr.Zero), "IAudioClient.Initialize (render)");
             Hr.Check(client.GetBufferSize(out uint bufferFrames), "GetBufferSize");
             BufferFrames = (int)bufferFrames;
