@@ -1,0 +1,157 @@
+<Window x:Class="WinMusic.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WinMusic" Width="600" Height="860" MinWidth="480" MinHeight="600"
+        Background="{StaticResource Bg}" WindowStartupLocation="CenterScreen"
+        Loaded="OnLoaded" Closing="OnClosing">
+  <Window.Resources>
+    <Style x:Key="MeterTrack" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource Track}"/>
+      <Setter Property="CornerRadius" Value="3"/>
+      <Setter Property="Height" Value="6"/>
+      <Setter Property="ClipToBounds" Value="True"/>
+    </Style>
+  </Window.Resources>
+
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="18">
+
+      <!-- Header -->
+      <Grid Margin="0,0,0,14">
+        <StackPanel>
+          <TextBlock Text="WinMusic" FontSize="24" FontWeight="Bold"/>
+          <TextBlock Text="Studio-quality music through your mic" Foreground="{StaticResource Muted}"/>
+        </StackPanel>
+        <Border x:Name="LivePill" HorizontalAlignment="Right" VerticalAlignment="Center" CornerRadius="12" Padding="12,4" Background="#2A2E38">
+          <StackPanel Orientation="Horizontal">
+            <Ellipse x:Name="LiveDot" Width="8" Height="8" Fill="{StaticResource Muted}" Margin="0,0,6,0"/>
+            <TextBlock x:Name="LiveText" Text="OFF" FontWeight="SemiBold"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- Virtual mic -->
+      <Border Style="{StaticResource CardStyle}">
+        <StackPanel>
+          <TextBlock Text="VIRTUAL MIC" Style="{StaticResource Heading}"/>
+          <StackPanel Orientation="Horizontal">
+            <Ellipse x:Name="CableDot" Width="10" Height="10" Fill="{StaticResource Muted}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="CableText" Text="Checking…" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </StackPanel>
+          <TextBlock x:Name="CableDetail" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="18,4,0,10"/>
+          <WrapPanel>
+            <Button x:Name="InstallCableBtn" Content="Install VB-CABLE" Click="OnInstallCable" Background="{StaticResource Accent}" Margin="0,0,8,6"/>
+            <Button x:Name="OptimizeBtn" Content="Optimize Windows for music" Click="OnOptimize" Margin="0,0,8,6"
+                    ToolTip="Sets the virtual cable to 48 kHz / 24-bit, stops Windows lowering music during calls, and makes sure your speakers stay your default output."/>
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- Sources -->
+      <Border Style="{StaticResource CardStyle}">
+        <StackPanel>
+          <Grid>
+            <TextBlock Text="MUSIC SOURCES" Style="{StaticResource Heading}"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+              <CheckBox x:Name="ShowAllApps" Content="Show all apps" Checked="OnShowAllChanged" Unchecked="OnShowAllChanged" Margin="0,0,10,0" FontSize="12"/>
+              <Button Content="Refresh" Click="OnRefreshApps" Padding="8,2" Margin="0" FontSize="12"/>
+            </StackPanel>
+          </Grid>
+          <TextBlock Text="Tick the apps whose sound should go into your mic. Everything else stays on your speakers only."
+                     Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+          <ItemsControl x:Name="AppList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#20242C" CornerRadius="7" Padding="8,6" Margin="0,0,0,4">
+                  <DockPanel>
+                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsChecked, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <Image DockPanel.Dock="Left" Source="{Binding Icon}" Width="20" Height="20" Margin="0,0,8,0"/>
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding StateText}" Foreground="{Binding StateBrush}" FontSize="12" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                  </DockPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="NoAppsText" Text="No apps are playing sound right now. Start Spotify (or anything), press play, then Refresh — or tick “Show all apps”."
+                     Foreground="{StaticResource Muted}" TextWrapping="Wrap" Visibility="Collapsed"/>
+        </StackPanel>
+      </Border>
+
+      <!-- Mix -->
+      <Border Style="{StaticResource CardStyle}">
+        <StackPanel>
+          <TextBlock Text="MIX" Style="{StaticResource Heading}"/>
+
+          <Grid Margin="0,0,0,4">
+            <TextBlock Text="Music volume"/>
+            <TextBlock x:Name="MusicDb" HorizontalAlignment="Right" Foreground="{StaticResource Muted}"/>
+          </Grid>
+          <Slider x:Name="MusicSlider" Minimum="-30" Maximum="6" TickFrequency="0.5" IsSnapToTickEnabled="True" ValueChanged="OnMusicGain"
+                  ToolTip="0 dB = exactly the original audio. Double-click to reset." MouseDoubleClick="OnResetMusic"/>
+          <Border Style="{StaticResource MeterTrack}" Margin="0,4,0,14">
+            <Border x:Name="MusicMeter" Background="{StaticResource Good}" HorizontalAlignment="Left" Width="0" CornerRadius="3"/>
+          </Border>
+
+          <Grid Margin="0,0,0,6">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Your voice" VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <ComboBox x:Name="MicCombo" Grid.Column="1" SelectionChanged="OnMicChanged" Margin="0,0,8,0"/>
+            <CheckBox x:Name="MicMute" Grid.Column="2" Content="Mute" Checked="OnMicMute" Unchecked="OnMicMute"/>
+          </Grid>
+          <Grid Margin="0,0,0,4">
+            <TextBlock Text="Voice volume"/>
+            <TextBlock x:Name="MicDb" HorizontalAlignment="Right" Foreground="{StaticResource Muted}"/>
+          </Grid>
+          <Slider x:Name="MicSlider" Minimum="-30" Maximum="12" TickFrequency="0.5" IsSnapToTickEnabled="True" ValueChanged="OnMicGain" MouseDoubleClick="OnResetMic"/>
+          <Border Style="{StaticResource MeterTrack}" Margin="0,4,0,14">
+            <Border x:Name="MicMeter" Background="{StaticResource Good}" HorizontalAlignment="Left" Width="0" CornerRadius="3"/>
+          </Border>
+
+          <Grid Margin="0,0,0,4">
+            <TextBlock Text="Output to virtual mic"/>
+            <TextBlock x:Name="LimiterText" HorizontalAlignment="Right" Foreground="{StaticResource Muted}" Text="Limiter idle"/>
+          </Grid>
+          <Border Style="{StaticResource MeterTrack}" Height="8">
+            <Border x:Name="OutMeter" Background="{StaticResource Accent}" HorizontalAlignment="Left" Width="0" CornerRadius="3"/>
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <Button x:Name="StartBtn" Content="▶  Start" Style="{StaticResource BigButton}" Click="OnStartStop" Margin="0,0,0,6"/>
+      <CheckBox x:Name="AutoStart" Content="Start automatically when WinMusic opens" Margin="2,0,0,12" Foreground="{StaticResource Muted}"/>
+
+      <!-- Status -->
+      <Border Style="{StaticResource CardStyle}">
+        <StackPanel>
+          <TextBlock Text="STATUS" Style="{StaticResource Heading}"/>
+          <TextBlock x:Name="StatusText" Foreground="{StaticResource Muted}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" Text="Stopped."/>
+        </StackPanel>
+      </Border>
+
+      <!-- How to -->
+      <Border Style="{StaticResource CardStyle}">
+        <StackPanel>
+          <TextBlock Text="FOR THE BEST SOUND ON THE OTHER END" Style="{StaticResource Heading}"/>
+          <TextBlock TextWrapping="Wrap" LineHeight="20">
+            <Run FontWeight="SemiBold">In Discord</Run> (Settings → Voice &amp; Video):<LineBreak/>
+            • Input Device: <Run FontWeight="SemiBold">CABLE Output (VB-Audio Virtual Cable)</Run><LineBreak/>
+            • Noise Suppression: <Run FontWeight="SemiBold">None</Run> · Echo Cancellation: <Run FontWeight="SemiBold">Off</Run> · Automatic Gain Control: <Run FontWeight="SemiBold">Off</Run><LineBreak/>
+            • Input Sensitivity: turn auto off and drag the slider all the way left (or use Push-to-Talk)<LineBreak/>
+            • Higher bitrate voice channels (boosted servers, up to 384 kbps) sound much better<LineBreak/>
+            <LineBreak/>
+            <Run FontWeight="SemiBold">In Spotify</Run>: Audio quality “Lossless” or “Very high”, keep Spotify’s own volume at 100% and use the Music volume slider here.<LineBreak/>
+            <LineBreak/>
+            Use headphones so your mic doesn’t pick up your friends.
+          </TextBlock>
+        </StackPanel>
+      </Border>
+
+      <TextBlock x:Name="LogText" Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="2,0,2,0"/>
+    </StackPanel>
+  </ScrollViewer>
+</Window>

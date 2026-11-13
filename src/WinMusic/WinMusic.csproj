@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>WinMusic</AssemblyName>
+    <Product>WinMusic</Product>
+    <Description>Studio-quality music through your microphone</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../WinMusic.Audio/WinMusic.Audio.csproj" />
+  </ItemGroup>
+</Project>
