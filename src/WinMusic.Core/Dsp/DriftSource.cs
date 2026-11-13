@@ -80,6 +80,8 @@ public sealed class DriftSource
     public long Overflows { get; private set; }
     public long Resyncs { get; private set; }
     public long Jumps { get; private set; }
+    /// <summary>Optional diagnostics (called on the render thread, rarely).</summary>
+    public Action<string>? Trace;
 
     /// <summary>
     /// Producer side (capture thread). Accepts interleaved float with any channel count.
@@ -181,6 +183,7 @@ public sealed class DriftSource
             {
                 _running = true;
                 StartMeasure();
+                Trace?.Invoke($"start: level {fill / _inRate * 1000:F1} ms, keeping {_adjust * 1e6:F1} ppm");
             }
             else
             {
@@ -194,6 +197,7 @@ public sealed class DriftSource
         {
             _totalRead += _ring.Skip((int)(fill - _targetFrames));
             Resyncs++;
+            Trace?.Invoke($"resync: level was {fill / _inRate * 1000:F1} ms");
             StartMeasure();
         }
 
@@ -210,6 +214,7 @@ public sealed class DriftSource
                 double newAdjust = Math.Clamp(_adjust + slope / _inRate, -MaxAdjust, MaxAdjust);
                 _setpoint = Math.Max(_sy / _sn + slope * (_runTime - _st / _sn), _targetFrames); // level now
                 _integral = newAdjust / KiTrack;
+                Trace?.Invoke($"measured: slope {slope / _inRate * 1e6:F1} ppm over {_sn} samples → correction {_adjust * 1e6:F1} → {newAdjust * 1e6:F1} ppm, setpoint {_setpoint / _inRate * 1000:F1} ms");
                 Ramp(newAdjust, 3.0);
                 _measuring = false;
                 _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
@@ -228,6 +233,7 @@ public sealed class DriftSource
                     // That's not clock drift: don't change the speed to "fix" it, just re-measure and
                     // hold the new level. (Too high/low is still handled by resync/rebuffer.)
                     Jumps++;
+                    Trace?.Invoke($"jump: level {_fillSum / _fillCount / _inRate * 1000:F1} ms vs setpoint {_setpoint / _inRate * 1000:F1} ms → re-measure");
                     StartMeasure();
                     _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
                     goto applyRamp;
@@ -241,6 +247,7 @@ public sealed class DriftSource
                     _integral -= errSec * _periodElapsed; // anti-windup
                 }
                 Ramp(target, TrackPeriod);
+                Trace?.Invoke($"track: err {errSec * 1000:F2} ms → {target * 1e6:F1} ppm");
                 _fillSum = 0; _fillCount = 0; _periodElapsed = 0;
             }
         }
@@ -257,6 +264,7 @@ public sealed class DriftSource
         {
             // Source stopped delivering (app paused or closed). Go quiet and rebuffer.
             Underruns++;
+            Trace?.Invoke($"underrun: needed {need}, ring has {_ring.AvailableFrames}");
             _running = false;
             _resampler.Reset();
             _totalRead += _ring.Skip(_ring.AvailableFrames);

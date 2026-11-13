@@ -31,6 +31,10 @@ if (args.Length > 0 && args[0] == "--tone")
     return ToneChild(args[1], double.Parse(args[2], inv), double.Parse(args[3], inv), float.Parse(args[4], inv));
 
 string reportPath = args.Length >= 2 && args[0] == "--report" ? args[1] : "selftest-report.md";
+int onlyIdx = Array.IndexOf(args, "--only");
+var only = onlyIdx >= 0 && onlyIdx + 1 < args.Length && args[onlyIdx + 1].Trim().Length > 0
+    ? args[onlyIdx + 1].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet() : null;
+bool Run(string section) => only == null || only.Contains(section);
 var report = new StringBuilder();
 void Flush() { lock (report) File.WriteAllText(reportPath, report.ToString()); }
 void Say(string s) { Console.WriteLine(s); lock (report) report.AppendLine(s); }
@@ -87,6 +91,7 @@ int recRate = Devices.GetMixFormat(cableOut).SampleRate;
 // ---------------------------------------------------------------- 0
 Say("");
 Say("## 0. Baseline: VB-CABLE by itself (tone app → CABLE Input → CABLE Output, no WinMusic)");
+if (Run("0"))
 {
     using var child = StartTone(cableIn, 9, 1f);
     Thread.Sleep(1000);
@@ -100,6 +105,7 @@ Say("## 0. Baseline: VB-CABLE by itself (tone app → CABLE Input → CABLE Outp
 // ---------------------------------------------------------------- A
 Say("");
 Say("## A. Per-app capture (process loopback) of a 1 kHz tone");
+if (Run("A"))
 {
     using var child = StartTone(cableIn, 10, 1f);
     Thread.Sleep(1000);
@@ -117,6 +123,7 @@ Say("## A. Per-app capture (process loopback) of a 1 kHz tone");
 // ---------------------------------------------------------------- A2
 Say("");
 Say("## A2. Which Windows volume controls change what friends hear? (informational)");
+if (Run("A2"))
 {
     using var child = StartTone(cableIn, 12, 1f);
     Thread.Sleep(1000);
@@ -137,6 +144,7 @@ Say("## A2. Which Windows volume controls change what friends hear? (information
         (Math.Abs(delta) < 0.1 ? "speaker volume does NOT affect what friends hear" : "speaker volume DOES affect what friends hear"));
     Kill(child);
 }
+if (Run("A2"))
 {
     using var child = StartTone(cableIn, 8, 0f);   // the app's own Windows per-app volume at 0
     Thread.Sleep(1000);
@@ -151,6 +159,7 @@ Say("## A2. Which Windows volume controls change what friends hear? (information
 const int SettleSeconds = 12; // drift correction measures for 6 s, then ramps the correction in over 3 s
 Say("");
 Say("## B. Engine with a source on a different clock (drift correction), measured before and after VB-CABLE");
+if (Run("B"))
 {
     using var engine = new AudioEngine();
     engine.Log += m => Say($"  - log: {m}");
@@ -204,6 +213,7 @@ Say("## B. Engine with a source on a different clock (drift correction), measure
 // ---------------------------------------------------------------- C
 Say("");
 Say("## C. Full chain: real app → WinMusic per-app capture → mix → virtual mic");
+if (Run("C"))
 {
     using var child = StartTone(cableIn, SettleSeconds + 16, 1f);
     Thread.Sleep(800);
@@ -236,6 +246,7 @@ Say("## C. Full chain: real app → WinMusic per-app capture → mix → virtual
 // ---------------------------------------------------------------- D
 Say("");
 Say("## D. Picking an app by name; it closes and reopens while WinMusic runs");
+if (Run("D"))
 {
     using var engine = new AudioEngine();
     engine.Log += m => Say($"  - log: {m}");
@@ -259,9 +270,42 @@ Say("## D. Picking an app by name; it closes and reopens while WinMusic runs");
     Kill(child2);
 }
 
+// ---------------------------------------------------------------- P (diagnostic)
+if (only != null && only.Contains("P"))
+{
+    Say("");
+    Say("## P. Diagnostic: what process loopback delivers around pause/resume (250 ms bins)");
+    var psi = new ProcessStartInfo(toneApp) { UseShellExecute = false };
+    foreach (var a in new[] { "--tone-pattern", cableIn, "6", "3", "5", "3", "5" }) psi.ArgumentList.Add(a);
+    using var child = Process.Start(psi)!;
+    var pk = new List<(double t, int frames, bool silent)>();
+    var cap = CaptureStream.ForProcess(child.Id, outRate, 2, (d, ch, t, silent) => { lock (pk) pk.Add((AudioClock.Now, d.Length / ch, silent)); });
+    cap.Start();
+    child.WaitForExit(60000);
+    Thread.Sleep(500);
+    cap.Dispose();
+    double t0 = pk.Count > 0 ? pk[0].t : 0;
+    long total = 0;
+    var rows = new List<(double t, int frames, bool silent, double off)>();
+    foreach (var x in pk) { total += x.frames; rows.Add((x.t - t0, x.frames, x.silent, (x.t - t0 - total / (double)outRate) * 1000)); }
+    Say($"- packets {pk.Count}, discontinuities {cap.Discontinuities}");
+    Say("```");
+    Say(" time  pkts frames silent  maxGap(ms)  offset min..max (ms)");
+    for (double b = 0; b < (rows.Count > 0 ? rows[^1].t : 0) + 0.25; b += 0.25)
+    {
+        var bin = rows.Where(r => r.t >= b && r.t < b + 0.25).ToList();
+        if (bin.Count == 0) { Say($"{b,5:F2}  none"); continue; }
+        int idx0 = rows.IndexOf(bin[0]);
+        double maxGap = 0; for (int i = Math.Max(1, idx0); i < idx0 + bin.Count; i++) maxGap = Math.Max(maxGap, (rows[i].t - rows[i - 1].t) * 1000);
+        Say($"{b,5:F2} {bin.Count,5} {bin.Sum(r => r.frames),6} {bin.Count(r => r.silent),6}  {maxGap,9:F1}   {bin.Min(r => r.off),8:F1} .. {bin.Max(r => r.off),8:F1}");
+    }
+    Say("```");
+}
+
 // ---------------------------------------------------------------- E
 Say("");
 Say("## E. Music paused and resumed (app closes its audio stream for 4 s, twice)");
+if (Run("E"))
 {
     var psi = new ProcessStartInfo(toneApp) { UseShellExecute = false };
     foreach (var a in new[] { "--tone-pattern", cableIn, "14", "4", "10", "4", "16" }) psi.ArgumentList.Add(a);
@@ -269,6 +313,8 @@ Say("## E. Music paused and resumed (app closes its audio stream for 4 s, twice)
     using var engine = new AudioEngine();
     engine.SetMicDevice("");
     engine.Start(cableIn);
+    var traceStart = AudioClock.Now;
+    engine.SourceTrace = (name, m) => Say($"  - trace {AudioClock.Now - traceStart,6:F2}s: {m}");
     engine.AddAppPid(child.Id);
     var tap = new List<float>();
     engine.OutputTap = d => { lock (tap) for (int i = 0; i < d.Length; i += 2) tap.Add(d[i]); };
@@ -295,6 +341,7 @@ Say("## E. Music paused and resumed (app closes its audio stream for 4 s, twice)
 const int SoakMinutes = 5;
 Say("");
 Say($"## F. Soak test: {SoakMinutes} minutes of continuous music");
+if (Run("F"))
 {
     using var child = StartTone(cableIn, SoakMinutes * 60 + 30, 1f);
     Thread.Sleep(800);

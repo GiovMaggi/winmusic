@@ -55,6 +55,8 @@ public sealed class AudioEngine : IDisposable
 
     public event Action<string>? Log;
     public OutputTapHandler? OutputTap;
+    /// <summary>Diagnostics from each source's drift controller (name, message).</summary>
+    public Action<string, string>? SourceTrace;
     public bool IsRunning => _render != null && !_stop;
     public WaveFormatInfo? OutputFormat => _render?.Format;
     public string? OutputDeviceName { get; private set; }
@@ -308,6 +310,7 @@ public sealed class AudioEngine : IDisposable
                 drift = new DriftSource(_outRate, _outRate, targetLatencyMs: 40);
             }
             src = new Source { Key = key, Name = name, Kind = kind, Drift = drift, Capture = cap, Pid = pid, DeviceId = deviceId };
+            drift.Trace = m => SourceTrace?.Invoke(name, m);
             var s = src;
             cap.Failed += e => { s.Failed = true; s.Error = e.Message; Log?.Invoke($"{s.Name}: {e.Message}"); };
             cap.Start();

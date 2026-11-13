@@ -6,6 +6,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      only:
+        description: 'Run only these self test sections (comma separated, e.g. E,P). Empty = all.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -83,12 +88,13 @@ jobs:
       - name: Run self test
         shell: pwsh
         run: |
-          ./selftest/WinMusic.SelfTest.exe --report selftest-report.md
+          ./selftest/WinMusic.SelfTest.exe --report selftest-report.md --only "${{ github.event.inputs.only }}"
           $code = $LASTEXITCODE
           if (Test-Path selftest-report.md) { Get-Content selftest-report.md | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY }
           exit $code
       - name: GUI end-to-end test (the real WinMusic.exe)
-        if: success() || failure()
+        if: (success() || failure()) && github.event.inputs.only == ''
+
         shell: pwsh
         run: |
           $toneDir = "$env:TEMP\WinMusicToneApp"
