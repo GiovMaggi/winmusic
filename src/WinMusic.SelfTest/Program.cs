@@ -243,6 +243,65 @@ if (Run("C"))
     Kill(child);
 }
 
+// ---------------------------------------------------------------- L
+Say("");
+Say("## L. No limiter: a loud source boosted +6 dB (music slider max) is sent exactly as set");
+if (Run("L"))
+{
+    using var engine = new AudioEngine();
+    engine.Log += m => Say($"  - log: {m}");
+    engine.SetMicDevice("");
+    engine.Start(cableIn);
+    engine.SetMusicGainDb(6);
+    var gen = engine.AddExternalSource("loud", 48000);
+    var stopGen = false;
+    const double genAmp = 0.9; // -0.9 dBFS before the boost
+    var genThread = new Thread(() =>
+    {
+        long phase = 0; const int packet = 480; const double fs = 48000;
+        var buf = new float[packet * 2];
+        double t0 = AudioClock.Now; long written = 0;
+        while (!Volatile.Read(ref stopGen))
+        {
+            double due = t0 + (written + packet) / fs;
+            while (AudioClock.Now < due) Thread.Sleep(1);
+            for (int i = 0; i < packet; i++)
+            {
+                float v = (float)(genAmp * Math.Sin(2 * Math.PI * 997 * phase++ / fs));
+                buf[i * 2] = v; buf[i * 2 + 1] = v;
+            }
+            gen.Write(buf, 2, t0 + written / fs);
+            written += packet;
+        }
+    }) { IsBackground = true, Priority = ThreadPriority.Highest };
+    genThread.Start();
+    var tap = new List<float>();
+    engine.OutputTap = d => { lock (tap) for (int i = 0; i < d.Length; i += 2) tap.Add(d[i]); };
+    var rec = RecordDevice(cableOut, (SettleSeconds + 8) * 1000);
+    engine.OutputTap = null;
+    var (_, _, meterOut) = engine.ReadAndResetMeters();
+    var st = engine.GetStatus().First();
+    Volatile.Write(ref stopGen, true); genThread.Join();
+    float[] tapArr; lock (tap) tapArr = tap.ToArray();
+    var settled = Settled(TrimSilence(tapArr), outRate);
+    var rep = SineAnalyzer.Analyze(settled, outRate, 997);
+    double expected = genAmp * Math.Pow(10, 6 / 20.0);
+    double tapPeak = settled.Length > 0 ? settled.Max(Math.Abs) : 0;
+    double micPeak = rec.Length > 0 ? rec.Max(Math.Abs) : 0;
+    Say($"- source: {st}");
+    Say($"- WinMusic output (exactly what is sent to the cable): {rep}");
+    Say($"- output peak {20 * Math.Log10(Math.Max(tapPeak, 1e-9)):F2} dBFS (expected {20 * Math.Log10(expected):F2} dBFS; the old limiter held it at -1.00 dBFS)");
+    Say($"- virtual mic peak {20 * Math.Log10(Math.Max(micPeak, 1e-9)):F2} dBFS (informational: what Windows / VB-CABLE pass on above 0 dBFS)");
+    Check(rep.Blocks >= 60, "loud audio flowed for 8 s");
+    Check(rep.GlitchBlocks == 0 && rep.SilentBlocks == 0, "no glitches or dropouts");
+    Check(Math.Abs(20 * Math.Log10(rep.Amplitude / expected)) < 0.1, $"level is source +6 dB, not limited ({20 * Math.Log10(rep.Amplitude):F2} dBFS)");
+    Check(tapPeak > 1.5, $"output goes above 0 dBFS (peak {tapPeak:F3})");
+    Check(rep.MedianThdNDb < -110, $"boosted sine is clean, no gain riding (THD+N {rep.MedianThdNDb:F1} dB)");
+    Check(meterOut > 1.5f, $"output meter sees the unlimited level ({meterOut:F3})");
+    Check(micPeak > 0.5, "sound reaches the virtual mic");
+    engine.Stop();
+}
+
 // ---------------------------------------------------------------- D
 Say("");
 Say("## D. Picking an app by name; it closes and reopens while WinMusic runs");

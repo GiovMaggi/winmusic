@@ -6,7 +6,7 @@ Tick the apps you want in your mic (Spotify, a browser, a game…). Everything e
 
 ```
 Spotify ─┐  per-app capture (no rerouting)
-         ├─► WinMusic: 32-bit float mix ─► transparent limiter ─► CABLE Input ══► "CABLE Output" mic ─► Discord, games…
+         ├─► WinMusic: 32-bit float mix ─► CABLE Input ══► "CABLE Output" mic ─► Discord, games…
 Your mic ┘
 ```
 
@@ -47,7 +47,7 @@ In Spotify, set Audio quality to **Lossless** or **Very high**.
 | Clock drift between devices | The buffer level is measured from WASAPI hardware timestamps, then a 160-tap Kaiser-windowed sinc resampler is adjusted by a few ppm. No dropped or repeated samples, so no clicks. |
 | Resampler quality | THD+N of about −140 dB, aliasing rejected by more than 138 dB, flat to 20 kHz within 0.05 dB (see unit tests) |
 | Volume at 0 dB | Exactly ×1.0, so the audio passes through bit for bit |
-| Clipping | A look-ahead limiter at −1 dBFS that only acts when music plus voice would clip. Otherwise it's bit-transparent. |
+| Loudness | No limiter. Boosting the sliders is applied exactly as set, so pushing music plus voice above 0 dBFS will clip. |
 | Verified on real Windows | CI installs VB-CABLE on a Windows machine, plays test tones through the whole chain and measures what comes out of the virtual mic. See the Actions run summary or `selftest-report.md` in each release. |
 
 ## Building
@@ -59,7 +59,7 @@ dotnet publish src/WinMusic -c Release -r win-x64 --self-contained -p:PublishSin
 
 Project layout:
 
-- `src/WinMusic.Core`: DSP (resampler, drift-compensated buffer, limiter, analysis). Cross-platform and unit-tested.
+- `src/WinMusic.Core`: DSP (resampler, drift-compensated buffer, gain, analysis). Cross-platform and unit-tested.
 - `src/WinMusic.Audio`: hand-written WASAPI interop, per-app capture, the engine, and Windows setup helpers.
 - `src/WinMusic`: the WPF app.
 - `src/WinMusic.SelfTest`: the real-device test that CI runs.

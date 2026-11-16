@@ -114,7 +114,6 @@
 
           <Grid Margin="0,0,0,4">
             <TextBlock Text="Output to virtual mic"/>
-            <TextBlock x:Name="LimiterText" HorizontalAlignment="Right" Foreground="{StaticResource Muted}" Text="Limiter idle"/>
           </Grid>
           <Border Style="{StaticResource MeterTrack}" Height="8">
             <Border x:Name="OutMeter" Background="{StaticResource Accent}" HorizontalAlignment="Left" Width="0" CornerRadius="3"/>

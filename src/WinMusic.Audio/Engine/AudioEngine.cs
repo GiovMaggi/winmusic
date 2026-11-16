@@ -9,12 +9,12 @@ public enum SourceKind { App, Mic, External }
 public sealed record SourceStatus(string Name, SourceKind Kind, int Pid, bool Playing, double BufferedMs, double CorrectionPpm, long Underruns, string? Error,
     long Resyncs = 0, long Overflows = 0, long CaptureDiscontinuities = 0, long Jumps = 0);
 
-/// <summary>Receives exactly what is sent to the virtual cable (after mixing and limiting).</summary>
+/// <summary>Receives exactly what is sent to the virtual cable (after mixing).</summary>
 public delegate void OutputTapHandler(ReadOnlySpan<float> stereo);
 
 /// <summary>
 /// The WinMusic mixer:  [app captures] + [mic]  →  drift-compensated  →  mix (32-bit float)
-///                      →  transparent limiter  →  CABLE Input  →  "CABLE Output" virtual mic.
+///                      →  CABLE Input  →  "CABLE Output" virtual mic.
 /// </summary>
 public sealed class AudioEngine : IDisposable
 {
@@ -36,7 +36,6 @@ public sealed class AudioEngine : IDisposable
     private volatile Source[] _sources = Array.Empty<Source>();
     private RenderStream? _render;
     private volatile bool _renderFailed;
-    private Limiter? _limiter;
     private float[] _tmp = new float[48000 * 2];
     private int _outRate;
     private Thread? _watcher;
@@ -51,7 +50,7 @@ public sealed class AudioEngine : IDisposable
     private string? _outputDeviceId;
 
     // meters (render thread writes, UI reads & resets)
-    private float _peakMusic, _peakMic, _peakOut, _minLimiterGain = 1f;
+    private float _peakMusic, _peakMic, _peakOut;
 
     public event Action<string>? Log;
     public OutputTapHandler? OutputTap;
@@ -134,10 +133,10 @@ public sealed class AudioEngine : IDisposable
 
     // ---------- meters ----------
 
-    public (float music, float mic, float output, float limiterGain) ReadAndResetMeters()
+    public (float music, float mic, float output) ReadAndResetMeters()
     {
-        var r = (_peakMusic, _peakMic, _peakOut, _minLimiterGain);
-        _peakMusic = 0; _peakMic = 0; _peakOut = 0; _minLimiterGain = 1f;
+        var r = (_peakMusic, _peakMic, _peakOut);
+        _peakMusic = 0; _peakMic = 0; _peakOut = 0;
         return r;
     }
 
@@ -151,11 +150,10 @@ public sealed class AudioEngine : IDisposable
     {
         var render = new RenderStream(_outputDeviceId!, Fill);
         render.Failed += e => { Log?.Invoke($"Output stopped: {e.Message}"); _renderFailed = true; };
-        // The limiter and the output rate must be known before the first callback, so peek the mix format first.
+        // The output rate must be known before the first callback, so peek the mix format first.
         var mix = Devices.GetMixFormat(_outputDeviceId!);
         bool rateChanged = _outRate != 0 && _outRate != mix.SampleRate;
         _outRate = mix.SampleRate;
-        _limiter = new Limiter(_outRate);
         _renderFailed = false;
         if (rateChanged)
         {
@@ -188,7 +186,6 @@ public sealed class AudioEngine : IDisposable
             for (int i = 0; i < tmp.Length; i++) output[i] += tmp[i];
         }
 
-        _limiter!.Process(output, frames);
         OutputTap?.Invoke(output.Slice(0, frames * 2));
         float pOut = 0;
         for (int i = 0; i < frames * 2; i++) { float a = Math.Abs(output[i]); if (a > pOut) pOut = a; }
@@ -196,7 +193,6 @@ public sealed class AudioEngine : IDisposable
         if (pMusic > _peakMusic) _peakMusic = pMusic;
         if (pMic > _peakMic) _peakMic = pMic;
         if (pOut > _peakOut) _peakOut = pOut;
-        if (_limiter.LastMinGain < _minLimiterGain) _minLimiterGain = _limiter.LastMinGain;
     }
 
     private void WatchLoop()

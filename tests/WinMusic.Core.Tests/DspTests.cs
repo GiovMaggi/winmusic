@@ -297,30 +297,39 @@ public class DspTests
     }
 
     [Fact]
-    public void Limiter_IsBitTransparentBelowCeiling()
+    public void GainRamp_BoostIsNotLimited()
     {
-        var lim = new Limiter(48000);
-        var input = Sine(48000, 48000, 440, 0.8); // -1.9 dBFS, under the -1 dB ceiling
+        // +6 dB (music slider max) on a -1.9 dBFS sine must come out at +4.1 dBFS, not held under 0 dBFS
+        var g = new GainRamp(1f);
+        float target = GainRamp.DbToGain(6);
+        var input = Sine(48000, 48000, 440, 0.8);
         var work = (float[])input.Clone();
-        for (int o = 0; o < 48000; o += 480) lim.Process(work.AsSpan(o * 2, 960), 480);
-        int d = lim.LatencyFrames;
-        for (int i = 0; i < 48000 - d; i++)
-        {
-            Assert.Equal(input[i * 2], work[(i + d) * 2]);
-            Assert.Equal(input[i * 2 + 1], work[(i + d) * 2 + 1]);
-        }
+        for (int o = 0; o < 48000; o += 480) g.Apply(work.AsSpan(o * 2, 960), 480, target);
+        // first block is the click-free ramp; after that every sample is exactly input * gain
+        for (int i = 480 * 2; i < work.Length; i++) Assert.Equal(input[i] * target, work[i]);
+        Assert.True(work.Max(Math.Abs) > 1.5f, $"peak {work.Max(Math.Abs)}");
     }
 
     [Fact]
-    public void Limiter_NeverExceedsCeiling()
+    public void GainRamp_HotSignalPassesUntouched()
     {
-        var lim = new Limiter(48000);
+        // signals far above 0 dBFS at unity gain are not altered at all
+        var g = new GainRamp(1f);
         var rnd = new Random(5);
         var input = new float[48000 * 2];
         for (int i = 0; i < input.Length; i++) input[i] = (float)((rnd.NextDouble() * 2 - 1) * (i % 9000 < 3000 ? 3.0 : 0.3));
-        for (int o = 0; o < 48000; o += 480) lim.Process(input.AsSpan(o * 2, 960), 480);
-        float max = input.Max(Math.Abs);
-        Assert.True(max <= lim.Ceiling * 1.000001f, $"peak {max}");
+        var work = (float[])input.Clone();
+        for (int o = 0; o < 48000; o += 480) g.Apply(work.AsSpan(o * 2, 960), 480, 1f);
+        Assert.Equal(input, work);
+    }
+
+    [Theory]
+    [InlineData(12.0)]
+    [InlineData(6.0)]
+    [InlineData(3.5)]
+    public void GainRamp_DbToGain_MatchesSliderValue(double db)
+    {
+        Assert.Equal(Math.Pow(10, db / 20), GainRamp.DbToGain(db), 5);
     }
 
     [Fact]

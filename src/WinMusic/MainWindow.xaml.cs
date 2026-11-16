@@ -545,16 +545,13 @@ public partial class MainWindow : Window
             MusicMeter.Width = MicMeter.Width = OutMeter.Width = 0;
             return;
         }
-        var (music, mic, output, lim) = _engine.ReadAndResetMeters();
+        var (music, mic, output) = _engine.ReadAndResetMeters();
         _musicLevel = Smooth(_musicLevel, music);
         _micLevel = Smooth(_micLevel, mic);
         _outLevel = Smooth(_outLevel, output);
         SetMeter(MusicMeter, _musicLevel);
         SetMeter(MicMeter, _micLevel);
         SetMeter(OutMeter, _outLevel);
-        double gr = -20 * Math.Log10(Math.Max(lim, 1e-6));
-        LimiterText.Text = gr > 0.05 ? $"Limiter −{gr:F1} dB (turn something down)" : "Limiter idle · no clipping";
-        LimiterText.Foreground = (Brush)FindResource(gr > 0.05 ? "Warn" : "Muted");
     }
 
     private static float Smooth(float prev, float peak) => peak >= prev ? peak : prev * 0.85f + peak * 0.15f;
